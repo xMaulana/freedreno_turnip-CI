@@ -111,16 +111,17 @@ EOF
 			--cross-file "android-aarch64.txt" \
 			--native-file "native.txt" \
 			-Dbuildtype=release \
+			-Db_lto=true \
+   			-Db_lto_mode=thin \
+			-Dstrip=true \
 			-Dplatforms=android \
+			-Dvideo-codecs= \
 			-Dplatform-sdk-version="$sdkver" \
 			-Dandroid-stub=true \
 			-Dgallium-drivers= \
 			-Dvulkan-drivers=freedreno \
 			-Dvulkan-beta=true \
 			-Dfreedreno-kmds=kgsl \
-			-Db_lto=true \
-   			-Db_lto_mode=thin \
-			-Dstrip=true \
 			-Degl=disabled &> "$workdir/meson_log"
 
 	echo "Compiling build files ..." $'\n'
