@@ -11,6 +11,7 @@ ndkver="android-ndk-r28c"
 ndk="$workdir/$ndkver/toolchains/llvm/prebuilt/linux-x86_64/bin"
 sdkver="34"
 mesasrc="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-25.3.0/mesa-mesa-25.3.0.zip"
+srcfolder="mesa-mesa-25.3.0"
 
 clear
 
@@ -56,7 +57,7 @@ prepare_workdir(){
 		curl "$mesasrc" --output mesa-main.zip &> /dev/null
 	echo "Exracting mesa source ..." $'\n'
 		unzip mesa-main.zip &> /dev/null
-		cd mesa-main
+		cd mesa-$srcfolder
 }
 
 
@@ -83,7 +84,7 @@ c = ['ccache', '$ndk/aarch64-linux-android$sdkver-clang']
 cpp = ['ccache', '$ndk/aarch64-linux-android$sdkver-clang++', '-fno-exceptions', '-fno-unwind-tables', '-fno-asynchronous-unwind-tables', '--start-no-unused-arguments', '-static-libstdc++', '--end-no-unused-arguments']
 c_ld = '$ndk/ld.lld'
 cpp_ld = '$ndk/ld.lld'
-strip = '$ndk/aarch64-linux-android-strip'
+strip = '$ndk/llvm-strip'
 pkg-config = ['env', 'PKG_CONFIG_LIBDIR=$ndk/pkg-config', '/usr/bin/pkg-config']
 
 [host_machine]
@@ -110,6 +111,7 @@ EOF
 		meson setup build-android-aarch64 \
 			--cross-file "android-aarch64.txt" \
 			--native-file "native.txt" \
+			--prefix /tmp/turnip \
 			-Dbuildtype=release \
 			-Db_lto=true \
    			-Db_lto_mode=thin \
@@ -125,9 +127,9 @@ EOF
 			-Degl=disabled &> "$workdir/meson_log"
 
 	echo "Compiling build files ..." $'\n'
-		ninja -C build-android-aarch64 &> "$workdir/ninja_log"
+		ninja -C build-android-aarch64 install &> "$workdir/ninja_log"
 
-	if ! [ -a "$workdir"/mesa-main/build-android-aarch64/src/freedreno/vulkan/libvulkan_freedreno.so ]; then
+	if ! [ -a /tmp/turnip/lib/libvulkan_freedreno.so ]; then
 		echo -e "$red Build failed! $nocolor" && exit 1
 	fi
 }
