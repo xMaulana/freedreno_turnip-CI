@@ -67,32 +67,36 @@ prepare_source(){
     git config user.email "ci@turnip.builder"
     git config user.name "Turnip CI Builder"
 
-    # 2. Prepara os HACKS (Whitebelyash)
-    echo "Fetching Hacks from: $hacks_repo..."
-    git remote add hacks "$hacks_repo"
-    git fetch hacks "$hacks_branch"
-    
-    # 3. SMART MERGE (Hacks A830)
-    echo "Attempting Merge Hacks..."
-    if ! git merge --no-edit "hacks/$hacks_branch" --allow-unrelated-histories; then
-        echo -e "${red}Merge Conflict detected! Resolving intelligently...${nocolor}"
-        git checkout --theirs .
-        git add .
-        git commit -m "Auto-resolved conflicts by accepting Hacks"
-        echo -e "${green}Conflicts resolved. Hacks applied successfully.${nocolor}"
-    fi
-
-    # 4. APLICANDO MR NOVO (!38808)
+    # 2. APLICANDO MR !38808 (PRIMEIRO!)
+    # Aplicamos antes dos hacks para evitar que ele quebre a sintaxe do python depois
     echo -e "${green}Fetching & Merging MR !38808...${nocolor}"
     git fetch https://gitlab.freedesktop.org/mesa/mesa.git merge-requests/38808/head:mr-38808
     if ! git merge --no-edit mr-38808; then
-        echo -e "${red}Conflict in MR 38808. Forcing merge...${nocolor}"
+        echo -e "${red}Conflict in MR 38808. Resolving via 'theirs'...${nocolor}"
+        # Se der erro aqui, aceitamos o código do MR
         git checkout --theirs .
         git add .
         git commit -m "Force merge MR 38808"
     fi
 
-    # 5. REVERT DO COMMIT QUE MATA O DXVK (GS/Tess)
+    # 3. APLICANDO HACKS A830 (DEPOIS)
+    echo "Fetching Hacks from: $hacks_repo..."
+    git remote add hacks "$hacks_repo"
+    git fetch hacks "$hacks_branch"
+    
+    echo "Attempting Merge Hacks..."
+    # Usamos estratégia -X theirs para garantir que os Hacks A830 tenham prioridade
+    # e não fiquem com sintaxe quebrada
+    if ! git merge --no-edit -X theirs "hacks/$hacks_branch" --allow-unrelated-histories; then
+        echo -e "${red}Merge Conflict with Hacks! Forcing Hacks version...${nocolor}"
+        # Se mesmo o merge inteligente falhar, forçamos os arquivos do Hack
+        git checkout --theirs .
+        git add .
+        git commit -m "Auto-resolved conflicts by forcing Hacks"
+        echo -e "${green}Hacks applied successfully.${nocolor}"
+    fi
+
+    # 4. REVERT DO COMMIT QUE MATA O DXVK (GS/Tess)
     echo -e "${green}Attempting to REVERT commit $bad_commit (Fix DXVK)...${nocolor}"
     
     if git revert --no-edit "$bad_commit"; then
@@ -100,7 +104,7 @@ prepare_source(){
     else
         echo -e "${red}Git revert failed. Applying manual SED patch...${nocolor}"
         git revert --abort || true
-        # Patch manual (força bruta) para reativar GS/Tess
+        # Patch manual para reativar GS/Tess
         find src/freedreno/vulkan -name "*.cc" -print0 | xargs -0 sed -i 's/ && (pdevice->info->chip != 8)//g'
         find src/freedreno/vulkan -name "*.cc" -print0 | xargs -0 sed -i 's/ && (pdevice->info->chip == 8)//g'
         echo "Applied manual patch via SED to enable GS/Tess."
@@ -204,18 +208,18 @@ package_driver(){
 	cat <<EOF > meta.json
 {
   "schemaVersion": 1,
-  "name": "Mesa Turnip A8xx V9 ($short_hash)",
-  "description": "RobClark Base + Hacks + deckemu.",
+  "name": "Mesa Turnip A830 (MR 38808)",
+  "description": "RobClark Base + MR 38808 + Hacks A830 + DXVK Fix. SDK 36. Commit $short_hash",
   "author": "Turnip CI",
   "packageVersion": "1",
   "vendor": "Mesa",
-  "driverVersion": "Vulkan 1.4.335 (Mesa $version_str)",
+  "driverVersion": "Vulkan 1.4 (Mesa $version_str)",
   "minApi": 27,
   "libraryName": "vulkan.adreno.so"
 }
 EOF
 
-	local zip_name="Turnip-A8xx-${short_hash}.zip"
+	local zip_name="Turnip-A830-MR38808-${short_hash}.zip"
 	zip -9 "$workdir/$zip_name" "vulkan.adreno.so" meta.json
 	echo -e "${green}Package ready: $workdir/$zip_name${nocolor}"
 }
@@ -226,9 +230,9 @@ generate_release_info() {
     local date_tag=$(date +'%Y%m%d')
 	local short_hash=${commit_hash:0:7}
 
-    echo "Turnip-A8xx-${date_tag}-${short_hash}" > tag
-    echo "Turnip A8xx (MR 38808) - ${date_tag}" > release
-    echo "Automated Turnip Build." > description
+    echo "Turnip-A830-MR38808-${date_tag}-${short_hash}" > tag
+    echo "Turnip A830 (MR 38808) - ${date_tag}" > release
+    echo "Automated Turnip Build. SDK 36, DXVK Fix, MR 38808 included." > description
 }
 
 check_deps
