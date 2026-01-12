@@ -72,7 +72,7 @@ prepare_source(){
     git remote add hacks "$hacks_repo"
     git fetch hacks "$hacks_branch"
     
-    # 3. SMART MERGE
+    # 3. SMART MERGE (Hacks A830)
     echo "Attempting Merge Hacks..."
     if ! git merge --no-edit "hacks/$hacks_branch" --allow-unrelated-histories; then
         echo -e "${red}Merge Conflict detected! Resolving intelligently...${nocolor}"
@@ -82,28 +82,17 @@ prepare_source(){
         echo -e "${green}Conflicts resolved. Hacks applied successfully.${nocolor}"
     fi
 
-    # 4. APLICANDO MRs EXTRAS
-    # MR !38582
-    echo -e "${green}Fetching & Merging MR !38582 (Legacy Vertex)...${nocolor}"
-    git fetch https://gitlab.freedesktop.org/mesa/mesa.git merge-requests/38582/head:mr-38582
-    if ! git merge --no-edit mr-38582; then
-        echo -e "${red}Conflict in MR 38582. Forcing merge...${nocolor}"
+    # 4. APLICANDO MR NOVO (!38808)
+    echo -e "${green}Fetching & Merging MR !38808...${nocolor}"
+    git fetch https://gitlab.freedesktop.org/mesa/mesa.git merge-requests/38808/head:mr-38808
+    if ! git merge --no-edit mr-38808; then
+        echo -e "${red}Conflict in MR 38808. Forcing merge...${nocolor}"
         git checkout --theirs .
         git add .
-        git commit -m "Force merge MR 38582"
+        git commit -m "Force merge MR 38808"
     fi
 
-    # MR !39254
-    echo -e "${green}Fetching & Merging MR !39254 (Generated Commands)...${nocolor}"
-    git fetch https://gitlab.freedesktop.org/mesa/mesa.git merge-requests/39254/head:mr-39254
-    if ! git merge --no-edit mr-39254; then
-        echo -e "${red}Conflict in MR 39254. Forcing merge...${nocolor}"
-        git checkout --theirs .
-        git add .
-        git commit -m "Force merge MR 39254"
-    fi
-
-    # 5. REVERT DO COMMIT QUE MATA O DXVK
+    # 5. REVERT DO COMMIT QUE MATA O DXVK (GS/Tess)
     echo -e "${green}Attempting to REVERT commit $bad_commit (Fix DXVK)...${nocolor}"
     
     if git revert --no-edit "$bad_commit"; then
@@ -111,7 +100,7 @@ prepare_source(){
     else
         echo -e "${red}Git revert failed. Applying manual SED patch...${nocolor}"
         git revert --abort || true
-        # Remove a verificação "&& chip != 8"
+        # Patch manual (força bruta) para reativar GS/Tess
         find src/freedreno/vulkan -name "*.cc" -print0 | xargs -0 sed -i 's/ && (pdevice->info->chip != 8)//g'
         find src/freedreno/vulkan -name "*.cc" -print0 | xargs -0 sed -i 's/ && (pdevice->info->chip == 8)//g'
         echo "Applied manual patch via SED to enable GS/Tess."
@@ -127,7 +116,6 @@ prepare_source(){
     cd .. 
     
 	commit_hash=$(git rev-parse HEAD)
-    # Tenta pegar versão do arquivo VERSION, se não, usa git hash
     if [ -f VERSION ]; then
 	    version_str=$(cat VERSION | xargs)
 	else
@@ -207,29 +195,27 @@ package_driver(){
 
 	cd "$package_temp"
     
-    # 1. Renomeia para vulkan.adreno.so (como pedido no JSON)
     echo "Patching SONAME..."
 	patchelf --set-soname "vulkan.adreno.so" lib_temp.so
 	mv lib_temp.so "vulkan.adreno.so"
 
 	local short_hash=${commit_hash:0:7}
     
-    # 2. Gera o JSON no formato solicitado
 	cat <<EOF > meta.json
 {
   "schemaVersion": 1,
-  "name": "Mesa Turnip A830 v7 ($short_hash)",
-  "description": "Compiled from Source. RobClark Base + Hacks + MR 38582/39254 + DXVK Fix. SDK 36.",
+  "name": "Mesa Turnip A8xx V9 ($short_hash)",
+  "description": "RobClark Base + Hacks + deckemu.",
   "author": "Turnip CI",
   "packageVersion": "1",
   "vendor": "Mesa",
-  "driverVersion": "Vulkan 1.4 (Mesa $version_str)",
+  "driverVersion": "Vulkan 1.4.335 (Mesa $version_str)",
   "minApi": 27,
   "libraryName": "vulkan.adreno.so"
 }
 EOF
 
-	local zip_name="Turnip-A830-Custom-${short_hash}.zip"
+	local zip_name="Turnip-A8xx-${short_hash}.zip"
 	zip -9 "$workdir/$zip_name" "vulkan.adreno.so" meta.json
 	echo -e "${green}Package ready: $workdir/$zip_name${nocolor}"
 }
@@ -240,9 +226,9 @@ generate_release_info() {
     local date_tag=$(date +'%Y%m%d')
 	local short_hash=${commit_hash:0:7}
 
-    echo "Turnip-A830-v7-${date_tag}-${short_hash}" > tag
-    echo "Turnip A830 (Custom v7) - ${date_tag}" > release
-    echo "Automated Turnip Build. SDK 36, DXVK Fix, MRs included." > description
+    echo "Turnip-A8xx-${date_tag}-${short_hash}" > tag
+    echo "Turnip A8xx (MR 38808) - ${date_tag}" > release
+    echo "Automated Turnip Build." > description
 }
 
 check_deps
