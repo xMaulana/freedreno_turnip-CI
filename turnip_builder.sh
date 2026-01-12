@@ -5,7 +5,7 @@ green='\033[0;32m'
 red='\033[0;31m'
 nocolor='\033[0m'
 
-deps="meson ninja patchelf unzip curl pip flex bison zip git perl"
+deps="meson ninja patchelf unzip curl pip flex bison zip git"
 workdir="$(pwd)/turnip_workdir"
 
 # --- CONFIGURAÇÃO ---
@@ -19,7 +19,7 @@ base_branch="tu/gen8"
 hacks_repo="https://github.com/whitebelyash/mesa-tu8.git"
 hacks_branch="gen8-hacks"
 
-# Commit que quebra o DXVK (Disable GS/Tess)
+# Commit que quebra o DXVK (Vamos reverter ele)
 bad_commit="2f0ea1c6"
 
 commit_hash=""
@@ -59,7 +59,7 @@ prepare_source(){
 	cd "$workdir"
 	if [ -d mesa ]; then rm -rf mesa; fi
 	
-    # 1. Clona BASE (Rob Clark)
+    # 1. Clona BASE (Rob Clark - Último Commit)
     echo "Cloning Base: $base_repo ($base_branch)..."
 	git clone --branch "$base_branch" "$base_repo" mesa
 	cd mesa
@@ -67,62 +67,37 @@ prepare_source(){
     git config user.email "ci@turnip.builder"
     git config user.name "Turnip CI Builder"
 
-    # 2. APLICANDO MR !38808 (Primeiro)
-    echo -e "${green}Fetching & Merging MR !38808...${nocolor}"
-    git fetch https://gitlab.freedesktop.org/mesa/mesa.git merge-requests/38808/head:mr-38808
-    if ! git merge --no-edit mr-38808; then
-        echo -e "${red}Conflict in MR 38808. Forcing merge...${nocolor}"
-        git checkout --theirs .
-        git add .
-        git commit -m "Force merge MR 38808"
-    fi
-
-    # 3. APLICANDO HACKS A830
+    # 2. Prepara os HACKS
     echo "Fetching Hacks from: $hacks_repo..."
     git remote add hacks "$hacks_repo"
     git fetch hacks "$hacks_branch"
     
-    echo "Attempting Merge Hacks..."
-    # Tentamos o merge. Se der conflito no freedreno_devices.py, vamos resolvê-lo manualmente abaixo.
-    if ! git merge --no-edit -X theirs "hacks/$hacks_branch" --allow-unrelated-histories; then
-        echo -e "${red}Merge Conflict detected! Forcing resolution...${nocolor}"
+    # 3. SMART MERGE (Resolve conflitos automaticamente)
+    echo "Attempting Merge..."
+    # Tenta o merge. Se falhar, entra no bloco || (OR) para resolver.
+    if ! git merge --no-edit "hacks/$hacks_branch" --allow-unrelated-histories; then
+        echo -e "${red}Merge Conflict detected! Resolving intelligently...${nocolor}"
+        
+        # Para cada arquivo em conflito, forçamos a versão do HACK (Theirs)
+        # Isso garante que a definição do A830 e os hacks entrem, sobrescrevendo o Rob Clark apenas onde necessário.
         git checkout --theirs .
         git add .
-        git commit -m "Auto-resolved conflicts by forcing Hacks"
+        
+        # Finaliza o merge com os arquivos corrigidos
+        git commit -m "Auto-resolved conflicts by accepting Hacks"
+        echo -e "${green}Conflicts resolved. Hacks applied successfully.${nocolor}"
     fi
-    
-    # --- CORREÇÃO CRÍTICA DE SINTAXE ---
-    echo -e "${green}Fixing freedreno_devices.py syntax...${nocolor}"
-    
-    # PASSO 1: Força o arquivo a ser idêntico ao do Hack (descarta a mistura quebrada do merge)
-    git checkout hacks/gen8-hacks -- src/freedreno/common/freedreno_devices.py
-    echo "Restored freedreno_devices.py from Hacks repo."
 
-    # PASSO 2: Aplica a vírgula que falta no upstream (Bug conhecido do a825)
-    # Procura a linha que contem 'a8xx_825 =' e insere uma vírgula no final da linha ANTERIOR
-    sed -i -e '/a8xx_825 =/i ,' src/freedreno/common/freedreno_devices.py
-    # Remove qualquer linha vazia que tenha ficado com apenas uma virgula e une com a anterior (limpeza)
-    sed -i ':a;N;$!ba;s/\n,/,/g' src/freedreno/common/freedreno_devices.py 2>/dev/null || true
-    # Garante que ficou visualmente correto (opcional, só para log)
-    sed -i '/a8xx_825 =/i ,' src/freedreno/common/freedreno_devices.py
-    
-    # Método mais bruto e garantido: Substituir a quebra de linha antes do a825 por ", \n"
-    # Resetamos o arquivo de novo para garantir
-    git checkout hacks/gen8-hacks -- src/freedreno/common/freedreno_devices.py
-    # Adiciona a vírgula na linha anterior ao a8xx_825
-    sed -i ':a;N;$!ba;s/\(\n[[:space:]]*\)a8xx_825 =/, \1a8xx_825 =/g' src/freedreno/common/freedreno_devices.py
-    
-    echo "Syntax Fix Applied."
-
-    # 4. REVERT DO COMMIT QUE MATA O DXVK (GS/Tess)
-    echo -e "${green}Attempting to REVERT commit $bad_commit (Fix DXVK)...${nocolor}"
+    # 4. REVERT DO COMMIT QUE MATA O DXVK
+    echo -e "${green}Attempting to REVERT commit $bad_commit (Enable GS/Tess)...${nocolor}"
     
     if git revert --no-edit "$bad_commit"; then
         echo -e "${green}SUCCESS: Reverted GS/Tess disable! DXVK should work.${nocolor}"
     else
-        echo -e "${red}Git revert failed. Applying manual SED patch...${nocolor}"
+        echo -e "${red}Git revert failed (hash changed?). Trying manual SED patch...${nocolor}"
         git revert --abort || true
-        # Patch manual para reativar GS/Tess
+        # Se o revert falhar, usamos SED para apagar a verificação "&& chip != 8"
+        # Isso reativa Geometry e Tessellation no código fonte na força bruta
         find src/freedreno/vulkan -name "*.cc" -print0 | xargs -0 sed -i 's/ && (pdevice->info->chip != 8)//g'
         find src/freedreno/vulkan -name "*.cc" -print0 | xargs -0 sed -i 's/ && (pdevice->info->chip == 8)//g'
         echo "Applied manual patch via SED to enable GS/Tess."
@@ -138,11 +113,7 @@ prepare_source(){
     cd .. 
     
 	commit_hash=$(git rev-parse HEAD)
-    if [ -f VERSION ]; then
-	    version_str=$(cat VERSION | xargs)
-	else
-	    version_str="git-${commit_hash:0:7}"
-	fi
+	version_str="API36-RobClark-Latest"
 	cd "$workdir"
 }
 
@@ -154,7 +125,7 @@ compile_mesa(){
 	local ndk_bin_path="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
 	local ndk_sysroot_path="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
 
-    # Fallback compilador
+    # Fallback compilador (35 se 36 não existir)
     local compiler_ver="35"
     if [ ! -f "$ndk_bin_path/aarch64-linux-android${compiler_ver}-clang" ]; then compiler_ver="34"; fi
     echo "Using compiler binary: $compiler_ver (Targeting API $target_sdk)"
@@ -180,6 +151,7 @@ EOF
 	export CFLAGS="-D__ANDROID__"
 	export CXXFLAGS="-D__ANDROID__"
 
+    # Opções limpas e SPIRV forçado
 	meson setup "$build_dir" --cross-file "$cross_file" \
 		-Dbuildtype=release \
 		-Dplatforms=android \
@@ -216,29 +188,24 @@ package_driver(){
 	cp "$lib_path" "$package_temp/lib_temp.so"
 
 	cd "$package_temp"
-    
-    echo "Patching SONAME..."
 	patchelf --set-soname "vulkan.adreno.so" lib_temp.so
-	mv lib_temp.so "vulkan.adreno.so"
+	mv lib_temp.so "vulkan.ad07XX.so"
 
 	local short_hash=${commit_hash:0:7}
-    
+	local meta_name="Turnip-A830-DXVK-${short_hash}"
 	cat <<EOF > meta.json
 {
   "schemaVersion": 1,
-  "name": "Mesa Turnip A830 (MR 38808) Fixed",
-  "description": "RobClark + Hacks + MR 38808 + Syntax Fix + DXVK Fix. SDK 36.",
-  "author": "Turnip CI",
-  "packageVersion": "1",
-  "vendor": "Mesa",
-  "driverVersion": "Vulkan 1.4 (Mesa $version_str)",
-  "minApi": 27,
-  "libraryName": "vulkan.adreno.so"
+  "name": "$meta_name",
+  "description": "Turnip Gen8 (Bleeding Edge + DXVK Fix) - SDK 36. Commit $short_hash",
+  "author": "mesa-ci",
+  "driverVersion": "$version_str",
+  "libraryName": "vulkan.ad07XX.so"
 }
 EOF
 
-	local zip_name="Turnip-A830-MR38808-${short_hash}.zip"
-	zip -9 "$workdir/$zip_name" "vulkan.adreno.so" meta.json
+	local zip_name="Turnip-A830-DXVK-${short_hash}.zip"
+	zip -9 "$workdir/$zip_name" "vulkan.ad07XX.so" meta.json
 	echo -e "${green}Package ready: $workdir/$zip_name${nocolor}"
 }
 
@@ -248,9 +215,9 @@ generate_release_info() {
     local date_tag=$(date +'%Y%m%d')
 	local short_hash=${commit_hash:0:7}
 
-    echo "Turnip-A830-MR38808-${date_tag}-${short_hash}" > tag
-    echo "Turnip A830 (MR 38808 + Fix) - ${date_tag}" > release
-    echo "Automated Turnip Build. SDK 36, DXVK Fix, MR 38808, Syntax Fix." > description
+    echo "Turnip-DXVK-${date_tag}-${short_hash}" > tag
+    echo "Turnip A830 (DXVK Fix) - ${date_tag}" > release
+    echo "Automated Turnip Build. Features: SDK 36, Smart Merge (RobClark Latest), Reverted GS/Tess Disable." > description
 }
 
 check_deps
