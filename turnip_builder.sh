@@ -5,7 +5,7 @@ green='\033[0;32m'
 red='\033[0;31m'
 nocolor='\033[0m'
 
-deps="meson ninja patchelf unzip curl pip flex bison zip git"
+deps="meson ninja patchelf unzip curl pip flex bison zip git perl"
 workdir="$(pwd)/turnip_workdir"
 
 # --- CONFIGURAÇÃO ---
@@ -67,7 +67,7 @@ prepare_source(){
     git config user.email "ci@turnip.builder"
     git config user.name "Turnip CI Builder"
 
-    # 2. APLICANDO MR !38808 (Primeiro, para não quebrar o python depois)
+    # 2. APLICANDO MR !38808 (Primeiro)
     echo -e "${green}Fetching & Merging MR !38808...${nocolor}"
     git fetch https://gitlab.freedesktop.org/mesa/mesa.git merge-requests/38808/head:mr-38808
     if ! git merge --no-edit mr-38808; then
@@ -90,12 +90,23 @@ prepare_source(){
         git commit -m "Auto-resolved conflicts by accepting Hacks"
     fi
     
-    # --- CORREÇÃO DE SINTAXE (A825 MISSING COMMA) ---
-    echo -e "${green}Applying MANUAL SYNTAX FIX (Missing Comma for A825)...${nocolor}"
-    # O comando abaixo procura a linha "a8xx_825 = GPUProps" e insere uma vírgula na linha ANTERIOR.
-    # Isso resolve o SyntaxError: '(' was never closed
-    sed -i '/a8xx_825 = GPUProps/i ,' src/freedreno/common/freedreno_devices.py
-    echo "Comma inserted successfully."
+    # --- CORREÇÃO DE SINTAXE DO A825 (CIRÚRGICA) ---
+    echo -e "${green}Applying MANUAL SYNTAX FIX (Cleaning & Appending Comma)...${nocolor}"
+    
+    # PASSO A: Baixa o arquivo original do Hack para remover qualquer lixo da tentativa anterior
+    curl -L "https://raw.githubusercontent.com/whitebelyash/mesa-tu8/gen8-hacks/src/freedreno/common/freedreno_devices.py" \
+         -o src/freedreno/common/freedreno_devices.py
+         
+    # PASSO B: Usa PERL para anexar a vírgula ao FINAL da linha anterior
+    # Isso transforma:
+    #    ... anterior)
+    #    a8xx_825 ...
+    # Em:
+    #    ... anterior),
+    #    a8xx_825 ...
+    perl -i -p0e 's/(\n\s*a8xx_825)/,$1/s' src/freedreno/common/freedreno_devices.py
+    
+    echo "Syntax Fix Applied: Comma appended correctly."
 
     # 4. REVERT DO COMMIT QUE MATA O DXVK (GS/Tess)
     echo -e "${green}Attempting to REVERT commit $bad_commit (Fix DXVK)...${nocolor}"
@@ -209,7 +220,7 @@ package_driver(){
 	cat <<EOF > meta.json
 {
   "schemaVersion": 1,
-  "name": "Mesa Turnip A830 (MR 38808) SyntaxFix",
+  "name": "Mesa Turnip A830 (MR 38808) Fixed",
   "description": "RobClark + Hacks + MR 38808 + Syntax Fix + DXVK Fix. SDK 36.",
   "author": "Turnip CI",
   "packageVersion": "1",
