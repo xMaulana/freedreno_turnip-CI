@@ -23,8 +23,8 @@ green='\033[0;32m'
 red='\033[0;31m'
 nocolor='\033[0m'
 
-# REMOVIDO 'meson' daqui, pois instalaremos via PIP para ter a versão mais nova
-deps="ninja patchelf unzip curl pip flex bison zip git perl"
+# ADICIONADO: glslangValidator na lista
+deps="ninja patchelf unzip curl pip flex bison zip git perl glslangValidator"
 workdir="$(pwd)/turnip_workdir${DIR_SUFFIX}"
 
 # --- REPOSITÓRIOS ---
@@ -40,9 +40,9 @@ bad_commit="2f0ea1c6"
 check_deps(){
 	echo "Checking dependencies..."
 	for dep in $deps; do
-		if ! command -v $dep >/dev/null 2>&1; then echo -e "$red Missing: $dep$nocolor" && exit 1; fi
+		if ! command -v $dep >/dev/null 2>&1; then echo -e "$red Missing binary: $dep$nocolor" && exit 1; fi
 	done
-    # INSTALA MESON MAIS RECENTE VIA PIP (Fix para erro 1.4.0)
+    # Instala Meson > 1.4.0 via PIP
 	pip install meson mako &> /dev/null || true
 }
 
@@ -65,7 +65,7 @@ prepare_source(){
     git config user.email "ci@turnip.builder"
     git config user.name "Turnip CI Builder"
 
-    # 1. HACKS (Dinâmico: Hacks ou Yuck)
+    # 1. HACKS
     echo -e "${green}Merging hacks from branch: $HACKS_BRANCH...${nocolor}"
     git remote add hacks "$hacks_repo"
     git fetch hacks "$HACKS_BRANCH"
