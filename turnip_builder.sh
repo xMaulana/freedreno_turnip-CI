@@ -18,6 +18,7 @@ clear
 #There are 4 functions here, simply comment to disable.
 #You can insert your own function and make a pull request.
 run_all(){
+	echo "====== Begin building TU V$BUILD_VERSION! ======"
 	check_deps
 	prepare_workdir
 	build_lib_for_android gen8-hacks
@@ -149,10 +150,9 @@ EOF
   "libraryName": "libvulkan_freedreno.so"
 }
 EOF
-zip a8xx-$1.zip libvulkan_freedreno.so meta.json
-mv a8xx-$1.zip /tmp/
+zip /tmp/a8xx-$1-$BUILD_VERSION.zip libvulkan_freedreno.so meta.json
 cd -
-if ! [ -a /tmp/a8xx-$1.zip ]; then
+if ! [ -a /tmp/a8xx-$1-$BUILD_VERSION.zip ]; then
 	echo -e "$red Failed to pack the archive! $nocolor"
 fi
 }
