@@ -19,7 +19,7 @@ base_branch="tu/gen8"
 hacks_repo="https://github.com/whitebelyash/mesa-tu8.git"
 hacks_branch="gen8-hacks"
 
-# Commit que quebra o DXVK (Vamos reverter ele no final)
+# Commit que quebra o DXVK (Disable GS/Tess)
 bad_commit="2f0ea1c6"
 
 commit_hash=""
@@ -83,30 +83,36 @@ prepare_source(){
     git fetch hacks "$hacks_branch"
     
     echo "Attempting Merge Hacks..."
+    # Tentamos o merge. Se der conflito no freedreno_devices.py, vamos resolvê-lo manualmente abaixo.
     if ! git merge --no-edit -X theirs "hacks/$hacks_branch" --allow-unrelated-histories; then
-        echo -e "${red}Merge Conflict! Forcing Hacks...${nocolor}"
+        echo -e "${red}Merge Conflict detected! Forcing resolution...${nocolor}"
         git checkout --theirs .
         git add .
-        git commit -m "Auto-resolved conflicts by accepting Hacks"
+        git commit -m "Auto-resolved conflicts by forcing Hacks"
     fi
     
-    # --- CORREÇÃO DE SINTAXE DO A825 (CIRÚRGICA) ---
-    echo -e "${green}Applying MANUAL SYNTAX FIX (Cleaning & Appending Comma)...${nocolor}"
+    # --- CORREÇÃO CRÍTICA DE SINTAXE ---
+    echo -e "${green}Fixing freedreno_devices.py syntax...${nocolor}"
     
-    # PASSO A: Baixa o arquivo original do Hack para remover qualquer lixo da tentativa anterior
-    curl -L "https://raw.githubusercontent.com/whitebelyash/mesa-tu8/gen8-hacks/src/freedreno/common/freedreno_devices.py" \
-         -o src/freedreno/common/freedreno_devices.py
-         
-    # PASSO B: Usa PERL para anexar a vírgula ao FINAL da linha anterior
-    # Isso transforma:
-    #    ... anterior)
-    #    a8xx_825 ...
-    # Em:
-    #    ... anterior),
-    #    a8xx_825 ...
-    perl -i -p0e 's/(\n\s*a8xx_825)/,$1/s' src/freedreno/common/freedreno_devices.py
+    # PASSO 1: Força o arquivo a ser idêntico ao do Hack (descarta a mistura quebrada do merge)
+    git checkout hacks/gen8-hacks -- src/freedreno/common/freedreno_devices.py
+    echo "Restored freedreno_devices.py from Hacks repo."
+
+    # PASSO 2: Aplica a vírgula que falta no upstream (Bug conhecido do a825)
+    # Procura a linha que contem 'a8xx_825 =' e insere uma vírgula no final da linha ANTERIOR
+    sed -i -e '/a8xx_825 =/i ,' src/freedreno/common/freedreno_devices.py
+    # Remove qualquer linha vazia que tenha ficado com apenas uma virgula e une com a anterior (limpeza)
+    sed -i ':a;N;$!ba;s/\n,/,/g' src/freedreno/common/freedreno_devices.py 2>/dev/null || true
+    # Garante que ficou visualmente correto (opcional, só para log)
+    sed -i '/a8xx_825 =/i ,' src/freedreno/common/freedreno_devices.py
     
-    echo "Syntax Fix Applied: Comma appended correctly."
+    # Método mais bruto e garantido: Substituir a quebra de linha antes do a825 por ", \n"
+    # Resetamos o arquivo de novo para garantir
+    git checkout hacks/gen8-hacks -- src/freedreno/common/freedreno_devices.py
+    # Adiciona a vírgula na linha anterior ao a8xx_825
+    sed -i ':a;N;$!ba;s/\(\n[[:space:]]*\)a8xx_825 =/, \1a8xx_825 =/g' src/freedreno/common/freedreno_devices.py
+    
+    echo "Syntax Fix Applied."
 
     # 4. REVERT DO COMMIT QUE MATA O DXVK (GS/Tess)
     echo -e "${green}Attempting to REVERT commit $bad_commit (Fix DXVK)...${nocolor}"
