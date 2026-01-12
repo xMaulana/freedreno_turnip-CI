@@ -67,7 +67,7 @@ prepare_source(){
     git config user.email "ci@turnip.builder"
     git config user.name "Turnip CI Builder"
 
-    # 2. APLICANDO MR !38808
+    # 2. APLICANDO MR !38808 (Primeiro, para não quebrar o python depois)
     echo -e "${green}Fetching & Merging MR !38808...${nocolor}"
     git fetch https://gitlab.freedesktop.org/mesa/mesa.git merge-requests/38808/head:mr-38808
     if ! git merge --no-edit mr-38808; then
@@ -90,13 +90,12 @@ prepare_source(){
         git commit -m "Auto-resolved conflicts by accepting Hacks"
     fi
     
-    # --- CORREÇÃO MANUAL DE SINTAXE (CRUCIAL) ---
-    echo -e "${green}Applying MANUAL FIX for freedreno_devices.py syntax...${nocolor}"
-    # O arquivo Python costuma quebrar na mesclagem. Vamos baixar a versão LIMPA do Whitebelyash e substituir.
-    # Isso garante que a definição do A830 esteja correta e fecha os parênteses.
-    curl -L "https://raw.githubusercontent.com/whitebelyash/mesa-tu8/gen8-hacks/src/freedreno/common/freedreno_devices.py" \
-         -o src/freedreno/common/freedreno_devices.py
-    echo "File overwritten with clean version from Hacks repo."
+    # --- CORREÇÃO DE SINTAXE (A825 MISSING COMMA) ---
+    echo -e "${green}Applying MANUAL SYNTAX FIX (Missing Comma for A825)...${nocolor}"
+    # O comando abaixo procura a linha "a8xx_825 = GPUProps" e insere uma vírgula na linha ANTERIOR.
+    # Isso resolve o SyntaxError: '(' was never closed
+    sed -i '/a8xx_825 = GPUProps/i ,' src/freedreno/common/freedreno_devices.py
+    echo "Comma inserted successfully."
 
     # 4. REVERT DO COMMIT QUE MATA O DXVK (GS/Tess)
     echo -e "${green}Attempting to REVERT commit $bad_commit (Fix DXVK)...${nocolor}"
@@ -106,7 +105,7 @@ prepare_source(){
     else
         echo -e "${red}Git revert failed. Applying manual SED patch...${nocolor}"
         git revert --abort || true
-        # Patch manual via SED para reativar GS/Tess
+        # Patch manual para reativar GS/Tess
         find src/freedreno/vulkan -name "*.cc" -print0 | xargs -0 sed -i 's/ && (pdevice->info->chip != 8)//g'
         find src/freedreno/vulkan -name "*.cc" -print0 | xargs -0 sed -i 's/ && (pdevice->info->chip == 8)//g'
         echo "Applied manual patch via SED to enable GS/Tess."
@@ -210,8 +209,8 @@ package_driver(){
 	cat <<EOF > meta.json
 {
   "schemaVersion": 1,
-  "name": "Mesa Turnip A830 (MR 38808) Fixed",
-  "description": "RobClark Base + MR 38808 + Hacks A830 + DXVK Fix + Manual Syntax Fix. SDK 36.",
+  "name": "Mesa Turnip A830 (MR 38808) SyntaxFix",
+  "description": "RobClark + Hacks + MR 38808 + Syntax Fix + DXVK Fix. SDK 36.",
   "author": "Turnip CI",
   "packageVersion": "1",
   "vendor": "Mesa",
@@ -233,8 +232,8 @@ generate_release_info() {
 	local short_hash=${commit_hash:0:7}
 
     echo "Turnip-A830-MR38808-${date_tag}-${short_hash}" > tag
-    echo "Turnip A830 (MR 38808) - ${date_tag}" > release
-    echo "Automated Turnip Build. SDK 36, DXVK Fix, MR 38808 included." > description
+    echo "Turnip A830 (MR 38808 + Fix) - ${date_tag}" > release
+    echo "Automated Turnip Build. SDK 36, DXVK Fix, MR 38808, Syntax Fix." > description
 }
 
 check_deps
