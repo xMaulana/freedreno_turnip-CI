@@ -5,17 +5,18 @@ green='\033[0;32m'
 red='\033[0;31m'
 nocolor='\033[0m'
 
-deps="meson ninja patchelf unzip curl pip flex bison zip git"
+deps="meson ninja patchelf unzip curl pip flex bison zip git perl"
 workdir="$(pwd)/turnip_workdir"
 
 # --- CONFIGURAÇÃO ---
 ndkver="android-ndk-r28"
 target_sdk="36"
 
-# REPOSITÓRIOS
+# BASE: Rob Clark (Bleeding Edge)
 base_repo="https://gitlab.freedesktop.org/robclark/mesa.git"
 base_branch="tu/gen8"
 
+# HACKS: Whitebelyash (A830 Support)
 hacks_repo="https://github.com/whitebelyash/mesa-tu8.git"
 hacks_branch="gen8-hacks"
 
@@ -63,6 +64,10 @@ prepare_source(){
     echo "Cloning Base: $base_repo ($base_branch)..."
 	git clone --branch "$base_branch" "$base_repo" mesa
 	cd mesa
+    
+    # LOG: Mostra qual o commit base
+    echo -e "${green}Current Rob Clark Commit:${nocolor}"
+    git log -1 --format="%H - %cd - %s"
 
     git config user.email "ci@turnip.builder"
     git config user.name "Turnip CI Builder"
@@ -72,7 +77,7 @@ prepare_source(){
     git remote add hacks "$hacks_repo"
     git fetch hacks "$hacks_branch"
     
-    # 3. SMART MERGE (Resolve conflitos automaticamente)
+    # 3. SMART MERGE HACKS
     echo "Attempting Merge Hacks..."
     if ! git merge --no-edit "hacks/$hacks_branch" --allow-unrelated-histories; then
         echo -e "${red}Merge Conflict detected! Resolving intelligently...${nocolor}"
@@ -82,16 +87,10 @@ prepare_source(){
         echo -e "${green}Conflicts resolved. Hacks applied successfully.${nocolor}"
     fi
 
-    # --- NOVO: APLICANDO APENAS A MR !39254 ---
-    echo -e "${green}Fetching & Merging MR !39254 (Generated Commands)...${nocolor}"
-    git fetch https://gitlab.freedesktop.org/mesa/mesa.git merge-requests/39254/head:mr-39254
-    if ! git merge --no-edit mr-39254; then
-        echo -e "${red}Conflict in MR 39254. Forcing merge...${nocolor}"
-        git checkout --theirs .
-        git add .
-        git commit -m "Force merge MR 39254"
-    fi
-    # ------------------------------------------
+    # --- CORREÇÃO DE SINTAXE (A825 MISSING COMMA) ---
+    # Obrigatório pois o hack original tem esse bug de digitação
+    echo "Fixing freedreno_devices.py syntax..."
+    perl -i -p0e 's/(\n\s*a8xx_825)/,$1/s' src/freedreno/common/freedreno_devices.py
 
     # 4. REVERT DO COMMIT QUE MATA O DXVK
     echo -e "${green}Attempting to REVERT commit $bad_commit (Enable GS/Tess)...${nocolor}"
@@ -101,8 +100,7 @@ prepare_source(){
     else
         echo -e "${red}Git revert failed (hash changed?). Trying manual SED patch...${nocolor}"
         git revert --abort || true
-        # Se o revert falhar, usamos SED para apagar a verificação "&& chip != 8"
-        # Isso reativa Geometry e Tessellation no código fonte na força bruta
+        # Fallback manual para reativar GS/Tess
         find src/freedreno/vulkan -name "*.cc" -print0 | xargs -0 sed -i 's/ && (pdevice->info->chip != 8)//g'
         find src/freedreno/vulkan -name "*.cc" -print0 | xargs -0 sed -i 's/ && (pdevice->info->chip == 8)//g'
         echo "Applied manual patch via SED to enable GS/Tess."
@@ -118,7 +116,7 @@ prepare_source(){
     cd .. 
     
 	commit_hash=$(git rev-parse HEAD)
-	version_str="API36-RobClark-MR39254"
+	version_str="RobClark-BleedingEdge"
 	cd "$workdir"
 }
 
@@ -130,7 +128,7 @@ compile_mesa(){
 	local ndk_bin_path="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
 	local ndk_sysroot_path="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
 
-    # Fallback compilador (35 se 36 não existir)
+    # Fallback compilador
     local compiler_ver="35"
     if [ ! -f "$ndk_bin_path/aarch64-linux-android${compiler_ver}-clang" ]; then compiler_ver="34"; fi
     echo "Using compiler binary: $compiler_ver (Targeting API $target_sdk)"
@@ -156,7 +154,6 @@ EOF
 	export CFLAGS="-D__ANDROID__"
 	export CXXFLAGS="-D__ANDROID__"
 
-    # Opções limpas e SPIRV forçado
 	meson setup "$build_dir" --cross-file "$cross_file" \
 		-Dbuildtype=release \
 		-Dplatforms=android \
@@ -197,19 +194,19 @@ package_driver(){
 	mv lib_temp.so "vulkan.ad07XX.so"
 
 	local short_hash=${commit_hash:0:7}
-	local meta_name="Turnip-A830-MR39254-${short_hash}"
+	local meta_name="Turnip-A830-BleedingEdge-${short_hash}"
 	cat <<EOF > meta.json
 {
   "schemaVersion": 1,
   "name": "$meta_name",
-  "description": "Turnip Gen8 (Bleeding Edge + Hacks + MR 39254 + DXVK Fix). Commit $short_hash",
+  "description": "Turnip Gen8 (RobClark Latest + Hacks + DXVK Fix). Commit $short_hash",
   "author": "mesa-ci",
   "driverVersion": "$version_str",
   "libraryName": "vulkan.ad07XX.so"
 }
 EOF
 
-	local zip_name="Turnip-A830-MR39254-${short_hash}.zip"
+	local zip_name="Turnip-A830-BleedingEdge-${short_hash}.zip"
 	zip -9 "$workdir/$zip_name" "vulkan.ad07XX.so" meta.json
 	echo -e "${green}Package ready: $workdir/$zip_name${nocolor}"
 }
@@ -220,9 +217,9 @@ generate_release_info() {
     local date_tag=$(date +'%Y%m%d')
 	local short_hash=${commit_hash:0:7}
 
-    echo "Turnip-MR39254-${date_tag}-${short_hash}" > tag
-    echo "Turnip A830 (MR 39254) - ${date_tag}" > release
-    echo "Automated Turnip Build. Features: SDK 36, Hacks, MR 39254, DXVK Fix." > description
+    echo "Turnip-BleedingEdge-${date_tag}-${short_hash}" > tag
+    echo "Turnip A830 (RobClark Latest) - ${date_tag}" > release
+    echo "Automated Turnip Build. Features: SDK 36, Hacks, DXVK Fix. No extra MRs." > description
 }
 
 check_deps
