@@ -30,17 +30,28 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         body: |
-          Turnip Vulkan driver library Release V11
+          A8XX Turnip Vulkan V{{ inputs.version }}  
+          
+          Supports following GPUs:
+          - Adreno 825 (tested, working with minor glitches compared to A830) - GMEM/sysmem
+          - Adreno 830 (tested, working) - sysmem-only - gmem causes GPU hangs
+          - Adreno 840 (tested, working) - GMEM/sysmem
+          Following GPUs were added but no proper testing was done:
+          - Adreno 810 (had blackscreen as I assumed it's duo-slice, now the rendering should work, but I'm not sure)
+          - Adreno 829 (no testers were found)
+
+          GPUs other than 830/840 can have reduced performance and/or more glitches. Can't do anything about that, sorry!
 
           Files:
           * gen8-hacks - main branch (upstream MR + hacks applied)
-          * gen8-yuck - branch with some commits reverted to gain back perf in RDR2. Probably useless at this point
+          ~~* gen8-yuck - branch with some commits reverted to gain back perf in RDR2. Probably useless at this point~~
 
           Settings:
           * Disable DXVK_HUD
-          * Enable swapchain blit path to workaround corrupted image on Android: `WRAPPER_BLIT=1`
-          * **Activate sysmem on A830 - everything will hang/crash/etc without**: `TU_DEBUG=sysmem`. Not required on A840/A825
-          * If too unstable - activate nolrz: `TU_DEBUG=nolrz` or `TU_DEBUG=sysmem,nolrz` if A830.
+          * Enable swapchain blit path to workaround corrupted image on Android: `WRAPPER_BLIT=1` Not required on GameHub
+          * ~~Activate sysmem on A830 - everything will hang/crash/etc without: `TU_DEBUG=sysmem`. Not required on A840/A825~~
+          Now disabled automatically
+          * If too unstable - activate nolrz: `TU_DEBUG=nolrz`.
 
         tag_name: tu_v${{ inputs.version }}
         name: Turnip A8XX v${{ inputs.version }}
