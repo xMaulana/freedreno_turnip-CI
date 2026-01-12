@@ -1,12 +1,12 @@
-name: Turnip Gen8 Auto-Build
+name: Turnip Gen8 Single Build
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # Botão para disparar manualmente
   schedule:
-    - cron: '0 */12 * * *'
+    - cron: '0 */12 * * *' # Roda a cada 12h. Pode apagar se não quiser.
 
 jobs:
-  build-drivers:
+  build-driver:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -17,32 +17,27 @@ jobs:
       - name: Setup Dependencies
         run: |
           sudo apt-get update
-          # ADICIONADO: glslang-tools
-          sudo apt-get install -y ninja-build patchelf unzip flex bison git perl python3-pip glslang-tools
-          pip3 install --upgrade meson mako
+          sudo apt-get install -y meson ninja-build patchelf unzip flex bison git perl python3-pip
+          pip3 install mako
 
       - name: Calculate Version
         id: version
+        # Calcula a versão baseada no número da execução (Ex: V11, V12...)
         run: echo "V_NUM=$((GITHUB_RUN_NUMBER + 10))" >> $GITHUB_ENV
 
       - name: Make Script Executable
         run: chmod +x turnip_builder.sh
 
-      # --- BUILD 1: STANDARD (gen8-hacks) ---
-      - name: Build V${{ env.V_NUM }} (Standard)
+      # --- COMPILAÇÃO ÚNICA ---
+      - name: Build Driver V${{ env.V_NUM }}
+        # Roda o script sem argumentos (ou com argumentos simples se seu script pedir)
         run: ./turnip_builder.sh STD ${{ env.V_NUM }}
 
-      # --- BUILD 2: YUCK (gen8-yuck) ---
-      - name: Build V${{ env.V_NUM }}+Yuck (Yuck Branch)
-        run: ./turnip_builder.sh YUCK ${{ env.V_NUM }}
-
-      - name: Upload Artifacts
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Turnip-Gen8-V${{ env.V_NUM }}-Pack
-          path: |
-            turnip_workdir_STD/*.zip
-            turnip_workdir_YUCK/*.zip
+          name: Mesa-Turnip-Gen8-V${{ env.V_NUM }}
+          path: turnip_workdir/*.zip
 
       - name: Release
         uses: softprops/action-gh-release@v1
@@ -51,13 +46,11 @@ jobs:
           tag_name: V${{ env.V_NUM }}
           name: Turnip Gen8 V${{ env.V_NUM }}
           body: |
-            Automated Build (Every 12h)
+            **Automated Single Build**
             
-            **Contains:**
-            - **Mesa Turnip Gen8 V${{ env.V_NUM }}.zip**: Base RobClark + Standard Hacks (gen8-hacks) + DXVK Fix.
-            - **Mesa Turnip Gen8 V${{ env.V_NUM }}+Yuck.zip**: Base RobClark + **Yuck Hacks (gen8-yuck)** + DXVK Fix.
-            
-            *Compiled for Android 16 (SDK 36).*
+            - **Base:** RobClark (Bleeding Edge)
+            - **Hacks:** Adreno 830 Support (gen8-hacks)
+            - **Fixes:** DXVK Geometry/Tessellation Fix + Syntax Fixes
+            - **Target:** Android 16 (SDK 36)
           files: |
-            turnip_workdir_STD/*.zip
-            turnip_workdir_YUCK/*.zip
+            turnip_workdir/*.zip
