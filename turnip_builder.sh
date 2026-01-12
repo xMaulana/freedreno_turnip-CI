@@ -67,34 +67,36 @@ prepare_source(){
     git config user.email "ci@turnip.builder"
     git config user.name "Turnip CI Builder"
 
-    # 2. APLICANDO MR !38808 (PRIMEIRO!)
-    # Aplicamos antes dos hacks para evitar que ele quebre a sintaxe do python depois
+    # 2. APLICANDO MR !38808
     echo -e "${green}Fetching & Merging MR !38808...${nocolor}"
     git fetch https://gitlab.freedesktop.org/mesa/mesa.git merge-requests/38808/head:mr-38808
     if ! git merge --no-edit mr-38808; then
-        echo -e "${red}Conflict in MR 38808. Resolving via 'theirs'...${nocolor}"
-        # Se der erro aqui, aceitamos o código do MR
+        echo -e "${red}Conflict in MR 38808. Forcing merge...${nocolor}"
         git checkout --theirs .
         git add .
         git commit -m "Force merge MR 38808"
     fi
 
-    # 3. APLICANDO HACKS A830 (DEPOIS)
+    # 3. APLICANDO HACKS A830
     echo "Fetching Hacks from: $hacks_repo..."
     git remote add hacks "$hacks_repo"
     git fetch hacks "$hacks_branch"
     
     echo "Attempting Merge Hacks..."
-    # Usamos estratégia -X theirs para garantir que os Hacks A830 tenham prioridade
-    # e não fiquem com sintaxe quebrada
     if ! git merge --no-edit -X theirs "hacks/$hacks_branch" --allow-unrelated-histories; then
-        echo -e "${red}Merge Conflict with Hacks! Forcing Hacks version...${nocolor}"
-        # Se mesmo o merge inteligente falhar, forçamos os arquivos do Hack
+        echo -e "${red}Merge Conflict! Forcing Hacks...${nocolor}"
         git checkout --theirs .
         git add .
-        git commit -m "Auto-resolved conflicts by forcing Hacks"
-        echo -e "${green}Hacks applied successfully.${nocolor}"
+        git commit -m "Auto-resolved conflicts by accepting Hacks"
     fi
+    
+    # --- CORREÇÃO MANUAL DE SINTAXE (CRUCIAL) ---
+    echo -e "${green}Applying MANUAL FIX for freedreno_devices.py syntax...${nocolor}"
+    # O arquivo Python costuma quebrar na mesclagem. Vamos baixar a versão LIMPA do Whitebelyash e substituir.
+    # Isso garante que a definição do A830 esteja correta e fecha os parênteses.
+    curl -L "https://raw.githubusercontent.com/whitebelyash/mesa-tu8/gen8-hacks/src/freedreno/common/freedreno_devices.py" \
+         -o src/freedreno/common/freedreno_devices.py
+    echo "File overwritten with clean version from Hacks repo."
 
     # 4. REVERT DO COMMIT QUE MATA O DXVK (GS/Tess)
     echo -e "${green}Attempting to REVERT commit $bad_commit (Fix DXVK)...${nocolor}"
@@ -104,7 +106,7 @@ prepare_source(){
     else
         echo -e "${red}Git revert failed. Applying manual SED patch...${nocolor}"
         git revert --abort || true
-        # Patch manual para reativar GS/Tess
+        # Patch manual via SED para reativar GS/Tess
         find src/freedreno/vulkan -name "*.cc" -print0 | xargs -0 sed -i 's/ && (pdevice->info->chip != 8)//g'
         find src/freedreno/vulkan -name "*.cc" -print0 | xargs -0 sed -i 's/ && (pdevice->info->chip == 8)//g'
         echo "Applied manual patch via SED to enable GS/Tess."
@@ -208,8 +210,8 @@ package_driver(){
 	cat <<EOF > meta.json
 {
   "schemaVersion": 1,
-  "name": "Mesa Turnip A830 (MR 38808)",
-  "description": "RobClark Base + MR 38808 + Hacks A830 + DXVK Fix. SDK 36. Commit $short_hash",
+  "name": "Mesa Turnip A830 (MR 38808) Fixed",
+  "description": "RobClark Base + MR 38808 + Hacks A830 + DXVK Fix + Manual Syntax Fix. SDK 36.",
   "author": "Turnip CI",
   "packageVersion": "1",
   "vendor": "Mesa",
