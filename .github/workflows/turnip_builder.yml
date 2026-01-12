@@ -1,9 +1,9 @@
 name: Turnip Gen8 Single Build
 
 on:
-  workflow_dispatch: # Botão para disparar manualmente
+  workflow_dispatch: # Botão manual
   schedule:
-    - cron: '0 */12 * * *' # Roda a cada 12h. Pode apagar se não quiser.
+    - cron: '0 */12 * * *' # Roda a cada 12h
 
 jobs:
   build-driver:
@@ -17,12 +17,16 @@ jobs:
       - name: Setup Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y meson ninja-build patchelf unzip flex bison git perl python3-pip
-          pip3 install mako
+          # ADICIONADO: glslang-tools (Obrigatório para Vulkan Shaders)
+          # REMOVIDO: meson (Instalaremos via pip para ser mais novo)
+          sudo apt-get install -y ninja-build patchelf unzip flex bison git perl python3-pip glslang-tools
+          
+          # Instala Meson e Mako via PIP (Versão > 1.4.0)
+          pip3 install --upgrade meson mako
 
       - name: Calculate Version
         id: version
-        # Calcula a versão baseada no número da execução (Ex: V11, V12...)
+        # Calcula a versão (Run 1 = V11, Run 2 = V12...)
         run: echo "V_NUM=$((GITHUB_RUN_NUMBER + 10))" >> $GITHUB_ENV
 
       - name: Make Script Executable
@@ -30,7 +34,6 @@ jobs:
 
       # --- COMPILAÇÃO ÚNICA ---
       - name: Build Driver V${{ env.V_NUM }}
-        # Roda o script sem argumentos (ou com argumentos simples se seu script pedir)
         run: ./turnip_builder.sh STD ${{ env.V_NUM }}
 
       - name: Upload Artifact
