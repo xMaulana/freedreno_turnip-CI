@@ -1,62 +1,64 @@
-name: Build Turnip A830 (Gen8)
+name: Turnip Gen8 Auto-Build
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # Botão manual
   schedule:
-    - cron: "20 5 1,15 * *"
+    # Roda a cada 12 horas (ex: 00:00 e 12:00 UTC)
+    - cron: '0 */12 * * *'
 
 jobs:
-  build_and_release:
-    name: Build and Release
+  build-drivers:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # Permissão necessária para criar Releases
+      contents: write
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - name: Checkout CI Repo
+        uses: actions/checkout@v3
 
-      - name: Prepare Environment
+      - name: Setup Dependencies
         run: |
-          # Adiciona repositórios source (deb-src) de forma segura para Ubuntu 24.04+
-          sudo cp /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources.bak
-          sudo sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources || echo "Aviso: Falha ao editar ubuntu.sources, tentando método alternativo..."
-          
           sudo apt-get update
-          
-          # Dependências críticas
-          sudo apt-get install -y libssl-dev libzstd-dev libarchive-dev python3-mako python3-pip flex bison graphviz
-          
-          # Instala dependências de build do Mesa
-          sudo apt-get build-dep mesa -y
-          
-          # Garante ferramentas de build atualizadas
-          pip install --break-system-packages --upgrade meson ninja
+          sudo apt-get install -y meson ninja-build patchelf unzip flex bison git perl python3-pip
+          pip3 install mako
 
-      - name: Execute Build Script
-        run: bash ./turnip_builder.sh
+      - name: Calculate Version
+        id: version
+        # Run 1 = V11, Run 2 = V12, etc.
+        run: echo "V_NUM=$((GITHUB_RUN_NUMBER + 10))" >> $GITHUB_ENV
 
-      - name: Get Release Info
-        id: get_info
-        run: |
-          echo "RELEASE_NAME=$(cat turnip_workdir/release)" >> "$GITHUB_OUTPUT"
-          echo "TAG_NAME=$(cat turnip_workdir/tag)" >> "$GITHUB_OUTPUT"
-          # Usa caminho absoluto para evitar erros se o diretório de trabalho mudar
-          echo "BODY_PATH=$(pwd)/turnip_workdir/description" >> "$GITHUB_OUTPUT"
+      - name: Make Script Executable
+        run: chmod +x turnip_builder.sh
 
-      - name: Upload Logs
-        if: always()
+      # --- BUILD 1: STANDARD (gen8-hacks) ---
+      - name: Build V${{ env.V_NUM }} (Standard)
+        run: ./turnip_builder.sh STD ${{ env.V_NUM }}
+
+      # --- BUILD 2: YUCK (gen8-yuck) ---
+      - name: Build V${{ env.V_NUM }}+Yuck (Yuck Branch)
+        run: ./turnip_builder.sh YUCK ${{ env.V_NUM }}
+
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: build-logs
+          name: Turnip-Gen8-V${{ env.V_NUM }}-Pack
           path: |
-            turnip_workdir/meson_log
-            turnip_workdir/ninja_log
+            turnip_workdir_STD/*.zip
+            turnip_workdir_YUCK/*.zip
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
         with:
-          tag_name: ${{ steps.get_info.outputs.TAG_NAME }}
-          name: ${{ steps.get_info.outputs.RELEASE_NAME }}
-          body_path: ${{ steps.get_info.outputs.BODY_PATH }}
-          files: turnip_workdir/*.zip
-          draft: false
+          tag_name: V${{ env.V_NUM }}
+          name: Turnip Gen8 V${{ env.V_NUM }}
+          body: |
+            Automated Build (Every 12h)
+            
+            **Contains:**
+            - **Mesa Turnip Gen8 V${{ env.V_NUM }}.zip**: Base RobClark + Standard Hacks (gen8-hacks) + DXVK Fix.
+            - **Mesa Turnip Gen8 V${{ env.V_NUM }}+Yuck.zip**: Base RobClark + **Yuck Hacks (gen8-yuck)** + DXVK Fix.
+            
+            *Compiled for Android 16 (SDK 36).*
+          files: |
+            turnip_workdir_STD/*.zip
+            turnip_workdir_YUCK/*.zip
