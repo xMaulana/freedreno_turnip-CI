@@ -2,9 +2,6 @@
 set -o pipefail
 
 # MODO DE USO: ./turnip_builder.sh [STD|YUCK] [VERSAO_NUMERO]
-# Exemplo: ./turnip_builder.sh STD 11 -> Gera V11
-# Exemplo: ./turnip_builder.sh YUCK 11 -> Gera V11+Yuck
-
 BUILD_MODE=$1
 VERSION_NUM=$2
 
@@ -26,7 +23,8 @@ green='\033[0;32m'
 red='\033[0;31m'
 nocolor='\033[0m'
 
-deps="meson ninja patchelf unzip curl pip flex bison zip git perl"
+# REMOVIDO 'meson' daqui, pois instalaremos via PIP para ter a versão mais nova
+deps="ninja patchelf unzip curl pip flex bison zip git perl"
 workdir="$(pwd)/turnip_workdir${DIR_SUFFIX}"
 
 # --- REPOSITÓRIOS ---
@@ -37,9 +35,6 @@ base_repo="https://gitlab.freedesktop.org/robclark/mesa.git"
 base_branch="tu/gen8"
 
 hacks_repo="https://github.com/whitebelyash/mesa-tu8.git"
-# A branch de hacks é dinâmica (gen8-hacks ou gen8-yuck)
-
-# Commit que quebra o DXVK
 bad_commit="2f0ea1c6"
 
 check_deps(){
@@ -47,7 +42,8 @@ check_deps(){
 	for dep in $deps; do
 		if ! command -v $dep >/dev/null 2>&1; then echo -e "$red Missing: $dep$nocolor" && exit 1; fi
 	done
-	pip install mako &> /dev/null || true
+    # INSTALA MESON MAIS RECENTE VIA PIP (Fix para erro 1.4.0)
+	pip install meson mako &> /dev/null || true
 }
 
 prepare_ndk(){
@@ -74,7 +70,6 @@ prepare_source(){
     git remote add hacks "$hacks_repo"
     git fetch hacks "$HACKS_BRANCH"
     
-    # Merge com estratégia "Theirs" (Hacks ganham do Rob Clark em conflito)
     if ! git merge --no-edit -X theirs "hacks/$HACKS_BRANCH" --allow-unrelated-histories; then
         echo "Merge Conflict detected. Forcing Hacks ($HACKS_BRANCH)..."
         git checkout --theirs .
@@ -83,18 +78,16 @@ prepare_source(){
     fi
 
     # 2. CORREÇÃO SINTAXE PYTHON (Vírgula A825)
-    # Aplicamos em ambos pois o erro costuma existir nas duas branches do whitebelyash
     perl -i -p0e 's/(\n\s*a8xx_825)/,$1/s' src/freedreno/common/freedreno_devices.py
 
     # 3. FIX DXVK (GS/Tess)
     if ! git revert --no-edit "$bad_commit"; then
         git revert --abort || true
-        # Fallback manual via SED
         find src/freedreno/vulkan -name "*.cc" -print0 | xargs -0 sed -i 's/ && (pdevice->info->chip != 8)//g'
         find src/freedreno/vulkan -name "*.cc" -print0 | xargs -0 sed -i 's/ && (pdevice->info->chip == 8)//g'
     fi
 
-    # 4. SPIRV Dependencies
+    # 4. SPIRV
     mkdir -p subprojects && cd subprojects
     git clone --depth=1 https://github.com/KhronosGroup/SPIRV-Tools.git spirv-tools
     git clone --depth=1 https://github.com/KhronosGroup/SPIRV-Headers.git spirv-headers
@@ -147,7 +140,6 @@ package_driver(){
 	patchelf --set-soname "vulkan.adreno.so" lib_temp.so
 	mv lib_temp.so "vulkan.adreno.so"
 
-    # Nome Final: Ex: Mesa Turnip Gen8 V11+Yuck
     FINAL_NAME="Mesa Turnip Gen8 V${VERSION_NUM}${VERSION_SUFFIX}"
 
 	cat <<EOF > meta.json
