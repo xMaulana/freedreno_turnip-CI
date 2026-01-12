@@ -17,14 +17,12 @@ jobs:
       - name: Setup Dependencies
         run: |
           sudo apt-get update
-          # Removido 'meson' do apt-get para evitar versão antiga
-          sudo apt-get install -y ninja-build patchelf unzip flex bison git perl python3-pip
-          # Instalando Meson via PIP para garantir versão >1.4.0
+          # ADICIONADO: glslang-tools
+          sudo apt-get install -y ninja-build patchelf unzip flex bison git perl python3-pip glslang-tools
           pip3 install --upgrade meson mako
 
       - name: Calculate Version
         id: version
-        # Run 1 = V11
         run: echo "V_NUM=$((GITHUB_RUN_NUMBER + 10))" >> $GITHUB_ENV
 
       - name: Make Script Executable
