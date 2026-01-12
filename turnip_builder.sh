@@ -5,7 +5,8 @@ green='\033[0;32m'
 red='\033[0;31m'
 nocolor='\033[0m'
 
-deps="meson ninja patchelf unzip curl pip flex bison zip git perl"
+# ADICIONADO: glslangValidator (necessário para Mesa novo)
+deps="ninja patchelf unzip curl pip flex bison zip git perl glslangValidator"
 workdir="$(pwd)/turnip_workdir"
 
 # --- CONFIGURAÇÃO ---
@@ -30,16 +31,21 @@ check_deps(){
 	echo "Checking system dependencies ..."
 	for dep in $deps; do
 		if ! command -v $dep >/dev/null 2>&1; then
-			echo -e "$red Missing dependency: $dep$nocolor"
+			echo -e "$red Missing dependency binary: $dep$nocolor"
 			missing=1
 		else
 			echo -e "$green Found: $dep$nocolor"
 		fi
 	done
 	if [ "$missing" == "1" ]; then
-		echo "Please install missing dependencies." && exit 1
+		echo "Please install missing dependencies (ex: sudo apt install glslang-tools python3-pip ...)." && exit 1
 	fi
-	pip install mako &> /dev/null || true
+    
+    # CORREÇÃO MESON 1.4.0:
+    # Instalamos o meson via PIP para garantir a versão mais recente.
+    # O do apt (sistema) geralmente é velho (1.3.2).
+	echo "Updating Meson via pip..."
+	pip install meson mako --break-system-packages &> /dev/null || pip install meson mako &> /dev/null || true
 }
 
 prepare_ndk(){
@@ -88,7 +94,6 @@ prepare_source(){
     fi
 
     # --- CORREÇÃO DE SINTAXE (A825 MISSING COMMA) ---
-    # Obrigatório pois o hack original tem esse bug de digitação
     echo "Fixing freedreno_devices.py syntax..."
     perl -i -p0e 's/(\n\s*a8xx_825)/,$1/s' src/freedreno/common/freedreno_devices.py
 
