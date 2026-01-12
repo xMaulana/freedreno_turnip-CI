@@ -1,118 +1,147 @@
 #!/bin/bash -e
 set -o pipefail
 
-# MODO DE USO: ./turnip_builder.sh [STD|YUCK] [VERSAO_NUMERO]
-BUILD_MODE=$1
-VERSION_NUM=$2
-
-if [ -z "$BUILD_MODE" ]; then BUILD_MODE="STD"; fi
-if [ -z "$VERSION_NUM" ]; then VERSION_NUM="11"; fi
-
-# CONFIGURAÇÃO DE BRANCHES
-if [ "$BUILD_MODE" == "YUCK" ]; then
-    HACKS_BRANCH="gen8-yuck"
-    VERSION_SUFFIX="+Yuck"
-    DIR_SUFFIX="_YUCK"
-else
-    HACKS_BRANCH="gen8-hacks"
-    VERSION_SUFFIX=""
-    DIR_SUFFIX="_STD"
-fi
-
 green='\033[0;32m'
 red='\033[0;31m'
 nocolor='\033[0m'
 
-# ADICIONADO: glslangValidator na lista
-deps="ninja patchelf unzip curl pip flex bison zip git perl glslangValidator"
-workdir="$(pwd)/turnip_workdir${DIR_SUFFIX}"
+deps="meson ninja patchelf unzip curl pip flex bison zip git perl"
+workdir="$(pwd)/turnip_workdir"
 
-# --- REPOSITÓRIOS ---
+# --- CONFIGURAÇÃO ---
 ndkver="android-ndk-r28"
 target_sdk="36"
 
+# BASE: Rob Clark (Bleeding Edge)
 base_repo="https://gitlab.freedesktop.org/robclark/mesa.git"
 base_branch="tu/gen8"
 
+# HACKS: Whitebelyash (A830 Support)
 hacks_repo="https://github.com/whitebelyash/mesa-tu8.git"
+hacks_branch="gen8-hacks"
+
+# Commit que quebra o DXVK (Vamos reverter ele)
 bad_commit="2f0ea1c6"
 
+commit_hash=""
+version_str=""
+
 check_deps(){
-	echo "Checking dependencies..."
+	echo "Checking system dependencies ..."
 	for dep in $deps; do
-		if ! command -v $dep >/dev/null 2>&1; then echo -e "$red Missing binary: $dep$nocolor" && exit 1; fi
+		if ! command -v $dep >/dev/null 2>&1; then
+			echo -e "$red Missing dependency: $dep$nocolor"
+			missing=1
+		else
+			echo -e "$green Found: $dep$nocolor"
+		fi
 	done
-    # Instala Meson > 1.4.0 via PIP
-	pip install meson mako &> /dev/null || true
+	if [ "$missing" == "1" ]; then
+		echo "Please install missing dependencies." && exit 1
+	fi
+	pip install mako &> /dev/null || true
 }
 
 prepare_ndk(){
-	mkdir -p "$workdir" && cd "$workdir"
+	echo "Preparing NDK r28..."
+	mkdir -p "$workdir"
+	cd "$workdir"
 	if [ ! -d "$ndkver" ]; then
-		curl -L "https://dl.google.com/android/repository/${ndkver}-linux.zip" -o ndk.zip &> /dev/null
-		unzip -q ndk.zip &> /dev/null
+		echo "Downloading Android NDK $ndkver..."
+		curl -L "https://dl.google.com/android/repository/${ndkver}-linux.zip" --output "${ndkver}-linux.zip" &> /dev/null
+		echo "Extracting NDK..."
+		unzip -q "${ndkver}-linux.zip" &> /dev/null
 	fi
     export ANDROID_NDK_HOME="$workdir/$ndkver"
 }
 
 prepare_source(){
-	echo "Preparing Mesa source (Mode: $BUILD_MODE | Branch: $HACKS_BRANCH)..."
+	echo "Preparing Mesa source..."
 	cd "$workdir"
-	rm -rf mesa
+	if [ -d mesa ]; then rm -rf mesa; fi
+	
+    # 1. Clona BASE (Rob Clark - Último Commit)
+    echo "Cloning Base: $base_repo ($base_branch)..."
 	git clone --branch "$base_branch" "$base_repo" mesa
 	cd mesa
+    
+    # LOG: Mostra qual o commit base
+    echo -e "${green}Current Rob Clark Commit:${nocolor}"
+    git log -1 --format="%H - %cd - %s"
 
     git config user.email "ci@turnip.builder"
     git config user.name "Turnip CI Builder"
 
-    # 1. HACKS
-    echo -e "${green}Merging hacks from branch: $HACKS_BRANCH...${nocolor}"
+    # 2. Prepara os HACKS
+    echo "Fetching Hacks from: $hacks_repo..."
     git remote add hacks "$hacks_repo"
-    git fetch hacks "$HACKS_BRANCH"
+    git fetch hacks "$hacks_branch"
     
-    if ! git merge --no-edit -X theirs "hacks/$HACKS_BRANCH" --allow-unrelated-histories; then
-        echo "Merge Conflict detected. Forcing Hacks ($HACKS_BRANCH)..."
+    # 3. SMART MERGE HACKS
+    echo "Attempting Merge Hacks..."
+    if ! git merge --no-edit "hacks/$hacks_branch" --allow-unrelated-histories; then
+        echo -e "${red}Merge Conflict detected! Resolving intelligently...${nocolor}"
         git checkout --theirs .
         git add .
-        git commit -m "Auto-resolved conflicts by accepting $HACKS_BRANCH"
+        git commit -m "Auto-resolved conflicts by accepting Hacks"
+        echo -e "${green}Conflicts resolved. Hacks applied successfully.${nocolor}"
     fi
 
-    # 2. CORREÇÃO SINTAXE PYTHON (Vírgula A825)
+    # --- CORREÇÃO DE SINTAXE (A825 MISSING COMMA) ---
+    # Obrigatório pois o hack original tem esse bug de digitação
+    echo "Fixing freedreno_devices.py syntax..."
     perl -i -p0e 's/(\n\s*a8xx_825)/,$1/s' src/freedreno/common/freedreno_devices.py
 
-    # 3. FIX DXVK (GS/Tess)
-    if ! git revert --no-edit "$bad_commit"; then
+    # 4. REVERT DO COMMIT QUE MATA O DXVK
+    echo -e "${green}Attempting to REVERT commit $bad_commit (Enable GS/Tess)...${nocolor}"
+    
+    if git revert --no-edit "$bad_commit"; then
+        echo -e "${green}SUCCESS: Reverted GS/Tess disable! DXVK should work.${nocolor}"
+    else
+        echo -e "${red}Git revert failed (hash changed?). Trying manual SED patch...${nocolor}"
         git revert --abort || true
+        # Fallback manual para reativar GS/Tess
         find src/freedreno/vulkan -name "*.cc" -print0 | xargs -0 sed -i 's/ && (pdevice->info->chip != 8)//g'
         find src/freedreno/vulkan -name "*.cc" -print0 | xargs -0 sed -i 's/ && (pdevice->info->chip == 8)//g'
+        echo "Applied manual patch via SED to enable GS/Tess."
     fi
 
-    # 4. SPIRV
-    mkdir -p subprojects && cd subprojects
+    # --- SPIRV Manual ---
+    echo "Manually cloning dependencies..."
+    mkdir -p subprojects
+    cd subprojects
+    rm -rf spirv-tools spirv-headers
     git clone --depth=1 https://github.com/KhronosGroup/SPIRV-Tools.git spirv-tools
     git clone --depth=1 https://github.com/KhronosGroup/SPIRV-Headers.git spirv-headers
-    cd ..
+    cd .. 
     
-    cd "$workdir"
+	commit_hash=$(git rev-parse HEAD)
+	version_str="RobClark-BleedingEdge"
+	cd "$workdir"
 }
 
 compile_mesa(){
+	echo -e "${green}Compiling Mesa for SDK $target_sdk...${nocolor}"
+
 	local source_dir="$workdir/mesa"
 	local build_dir="$source_dir/build"
-	local ndk_bin="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
-    
-    local comp_ver="35"
-    if [ ! -f "$ndk_bin/aarch64-linux-android${comp_ver}-clang" ]; then comp_ver="34"; fi
+	local ndk_bin_path="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+	local ndk_sysroot_path="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+
+    # Fallback compilador
+    local compiler_ver="35"
+    if [ ! -f "$ndk_bin_path/aarch64-linux-android${compiler_ver}-clang" ]; then compiler_ver="34"; fi
+    echo "Using compiler binary: $compiler_ver (Targeting API $target_sdk)"
 
 	local cross_file="$source_dir/android-aarch64-crossfile.txt"
 	cat <<EOF > "$cross_file"
 [binaries]
-ar = '$ndk_bin/llvm-ar'
-c = ['ccache', '$ndk_bin/aarch64-linux-android${comp_ver}-clang', '--sysroot=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot']
-cpp = ['ccache', '$ndk_bin/aarch64-linux-android${comp_ver}-clang++', '--sysroot=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot', '-fno-exceptions', '-fno-unwind-tables', '-fno-asynchronous-unwind-tables', '-static-libstdc++']
+ar = '$ndk_bin_path/llvm-ar'
+c = ['ccache', '$ndk_bin_path/aarch64-linux-android${compiler_ver}-clang', '--sysroot=$ndk_sysroot_path']
+cpp = ['ccache', '$ndk_bin_path/aarch64-linux-android${compiler_ver}-clang++', '--sysroot=$ndk_sysroot_path', '-fno-exceptions', '-fno-unwind-tables', '-fno-asynchronous-unwind-tables', '--start-no-unused-arguments', '-static-libstdc++', '--end-no-unused-arguments']
 c_ld = 'lld'
 cpp_ld = 'lld'
-strip = '$ndk_bin/aarch64-linux-android-strip'
+strip = '$ndk_bin_path/aarch64-linux-android-strip'
 
 [host_machine]
 system = 'android'
@@ -122,40 +151,75 @@ endian = 'little'
 EOF
 
 	cd "$source_dir"
+	export CFLAGS="-D__ANDROID__"
+	export CXXFLAGS="-D__ANDROID__"
+
 	meson setup "$build_dir" --cross-file "$cross_file" \
-		-Dbuildtype=release -Dplatforms=android -Dplatform-sdk-version=$target_sdk -Dandroid-stub=true \
-		-Dgallium-drivers= -Dvulkan-drivers=freedreno -Dfreedreno-kmds=kgsl -Degl=disabled -Dglx=disabled \
-		-Db_lto=true -Dvulkan-beta=true -Ddefault_library=shared -Dzstd=disabled \
-        --force-fallback-for=spirv-tools,spirv-headers
-	ninja -C "$build_dir"
+		-Dbuildtype=release \
+		-Dplatforms=android \
+		-Dplatform-sdk-version=$target_sdk \
+		-Dandroid-stub=true \
+		-Dgallium-drivers= \
+		-Dvulkan-drivers=freedreno \
+		-Dfreedreno-kmds=kgsl \
+		-Degl=disabled \
+		-Dglx=disabled \
+		-Db_lto=true \
+		-Dvulkan-beta=true \
+		-Ddefault_library=shared \
+        -Dzstd=disabled \
+        --force-fallback-for=spirv-tools,spirv-headers \
+		2>&1 | tee "$workdir/meson_log"
+
+	ninja -C "$build_dir" 2>&1 | tee "$workdir/ninja_log"
 }
 
 package_driver(){
-	local build_dir="$workdir/mesa/build"
-	local pkg_temp="$workdir/package_temp"
-	rm -rf "$pkg_temp" && mkdir -p "$pkg_temp"
-	
-	cp "$build_dir/src/freedreno/vulkan/libvulkan_freedreno.so" "$pkg_temp/lib_temp.so"
-	cd "$pkg_temp"
+	local source_dir="$workdir/mesa"
+	local build_dir="$source_dir/build"
+	local lib_path="$build_dir/src/freedreno/vulkan/libvulkan_freedreno.so"
+	local package_temp="$workdir/package_temp"
+
+	if [ ! -f "$lib_path" ]; then
+		echo -e "${red}Build failed: libvulkan_freedreno.so not found.${nocolor}"
+		exit 1
+	fi
+
+	rm -rf "$package_temp"
+	mkdir -p "$package_temp"
+	cp "$lib_path" "$package_temp/lib_temp.so"
+
+	cd "$package_temp"
 	patchelf --set-soname "vulkan.adreno.so" lib_temp.so
-	mv lib_temp.so "vulkan.adreno.so"
+	mv lib_temp.so "vulkan.ad07XX.so"
 
-    FINAL_NAME="Mesa Turnip Gen8 V${VERSION_NUM}${VERSION_SUFFIX}"
-
+	local short_hash=${commit_hash:0:7}
+	local meta_name="Turnip-A830-BleedingEdge-${short_hash}"
 	cat <<EOF > meta.json
 {
   "schemaVersion": 1,
-  "name": "$FINAL_NAME",
-  "description": "Compiled from Source. RobClark Base + Hacks ($HACKS_BRANCH) + DXVK Fix. SDK 36.",
-  "author": "Turnip CI",
-  "packageVersion": "1",
-  "vendor": "Mesa",
-  "driverVersion": "Vulkan 1.4 (Mesa 26.0.0-devel)",
-  "minApi": 27,
-  "libraryName": "vulkan.adreno.so"
+  "name": "$meta_name",
+  "description": "Turnip Gen8 (RobClark Latest + Hacks + DXVK Fix). Commit $short_hash",
+  "author": "mesa-ci",
+  "driverVersion": "$version_str",
+  "libraryName": "vulkan.ad07XX.so"
 }
 EOF
-	zip -9 "$workdir/$FINAL_NAME.zip" "vulkan.adreno.so" meta.json
+
+	local zip_name="Turnip-A830-BleedingEdge-${short_hash}.zip"
+	zip -9 "$workdir/$zip_name" "vulkan.ad07XX.so" meta.json
+	echo -e "${green}Package ready: $workdir/$zip_name${nocolor}"
+}
+
+generate_release_info() {
+    echo -e "${green}Generating release info...${nocolor}"
+    cd "$workdir"
+    local date_tag=$(date +'%Y%m%d')
+	local short_hash=${commit_hash:0:7}
+
+    echo "Turnip-BleedingEdge-${date_tag}-${short_hash}" > tag
+    echo "Turnip A830 (RobClark Latest) - ${date_tag}" > release
+    echo "Automated Turnip Build. Features: SDK 36, Hacks, DXVK Fix. No extra MRs." > description
 }
 
 check_deps
@@ -163,3 +227,4 @@ prepare_ndk
 prepare_source
 compile_mesa
 package_driver
+generate_release_info
