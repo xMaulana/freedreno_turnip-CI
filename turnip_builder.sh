@@ -73,20 +73,25 @@ prepare_source(){
     git fetch hacks "$hacks_branch"
     
     # 3. SMART MERGE (Resolve conflitos automaticamente)
-    echo "Attempting Merge..."
-    # Tenta o merge. Se falhar, entra no bloco || (OR) para resolver.
+    echo "Attempting Merge Hacks..."
     if ! git merge --no-edit "hacks/$hacks_branch" --allow-unrelated-histories; then
         echo -e "${red}Merge Conflict detected! Resolving intelligently...${nocolor}"
-        
-        # Para cada arquivo em conflito, forçamos a versão do HACK (Theirs)
-        # Isso garante que a definição do A830 e os hacks entrem, sobrescrevendo o Rob Clark apenas onde necessário.
         git checkout --theirs .
         git add .
-        
-        # Finaliza o merge com os arquivos corrigidos
         git commit -m "Auto-resolved conflicts by accepting Hacks"
         echo -e "${green}Conflicts resolved. Hacks applied successfully.${nocolor}"
     fi
+
+    # --- NOVO: APLICANDO APENAS A MR !39254 ---
+    echo -e "${green}Fetching & Merging MR !39254 (Generated Commands)...${nocolor}"
+    git fetch https://gitlab.freedesktop.org/mesa/mesa.git merge-requests/39254/head:mr-39254
+    if ! git merge --no-edit mr-39254; then
+        echo -e "${red}Conflict in MR 39254. Forcing merge...${nocolor}"
+        git checkout --theirs .
+        git add .
+        git commit -m "Force merge MR 39254"
+    fi
+    # ------------------------------------------
 
     # 4. REVERT DO COMMIT QUE MATA O DXVK
     echo -e "${green}Attempting to REVERT commit $bad_commit (Enable GS/Tess)...${nocolor}"
@@ -113,7 +118,7 @@ prepare_source(){
     cd .. 
     
 	commit_hash=$(git rev-parse HEAD)
-	version_str="API36-RobClark-Latest"
+	version_str="API36-RobClark-MR39254"
 	cd "$workdir"
 }
 
@@ -192,19 +197,19 @@ package_driver(){
 	mv lib_temp.so "vulkan.ad07XX.so"
 
 	local short_hash=${commit_hash:0:7}
-	local meta_name="Turnip-A830-DXVK-${short_hash}"
+	local meta_name="Turnip-A830-MR39254-${short_hash}"
 	cat <<EOF > meta.json
 {
   "schemaVersion": 1,
   "name": "$meta_name",
-  "description": "Turnip Gen8 (Bleeding Edge + DXVK Fix) - SDK 36. Commit $short_hash",
+  "description": "Turnip Gen8 (Bleeding Edge + Hacks + MR 39254 + DXVK Fix). Commit $short_hash",
   "author": "mesa-ci",
   "driverVersion": "$version_str",
   "libraryName": "vulkan.ad07XX.so"
 }
 EOF
 
-	local zip_name="Turnip-A830-DXVK-${short_hash}.zip"
+	local zip_name="Turnip-A830-MR39254-${short_hash}.zip"
 	zip -9 "$workdir/$zip_name" "vulkan.ad07XX.so" meta.json
 	echo -e "${green}Package ready: $workdir/$zip_name${nocolor}"
 }
@@ -215,9 +220,9 @@ generate_release_info() {
     local date_tag=$(date +'%Y%m%d')
 	local short_hash=${commit_hash:0:7}
 
-    echo "Turnip-DXVK-${date_tag}-${short_hash}" > tag
-    echo "Turnip A830 (DXVK Fix) - ${date_tag}" > release
-    echo "Automated Turnip Build. Features: SDK 36, Smart Merge (RobClark Latest), Reverted GS/Tess Disable." > description
+    echo "Turnip-MR39254-${date_tag}-${short_hash}" > tag
+    echo "Turnip A830 (MR 39254) - ${date_tag}" > release
+    echo "Automated Turnip Build. Features: SDK 36, Hacks, MR 39254, DXVK Fix." > description
 }
 
 check_deps
