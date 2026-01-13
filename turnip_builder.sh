@@ -64,25 +64,11 @@ prepare_source(){
 	git clone --branch "$base_branch" --depth 100 "$base_repo" mesa
 	cd mesa
     
-    git config user.email "ci@turnip.builder"
-    git config user.name "Turnip CI Builder"
-
-    # --- NOVO: APLICANDO MR 39254 (Global Generated IOVA) ---
-    echo -e "${green}Fetching and Merging MR 39254 (Upstream)...${nocolor}"
-    # Busca a MR diretamente do GitLab do Mesa (Freedesktop)
-    git fetch https://gitlab.freedesktop.org/mesa/mesa.git refs/merge-requests/39254/head:mr-39254
-    
-    # Tenta mesclar
-    if git merge --no-edit mr-39254; then
-        echo -e "${green}MR 39254 merged successfully.${nocolor}"
-    else
-        echo -e "${red}Merge conflict on MR 39254! Aborting...${nocolor}"
-        exit 1
-    fi
-    # -------------------------------------------------------
-
     echo -e "${green}Current Commit:${nocolor}"
     git log -1 --format="%H - %cd - %s"
+
+    git config user.email "ci@turnip.builder"
+    git config user.name "Turnip CI Builder"
 
     # --- CORREÇÃO DE SINTAXE (Se necessário) ---
     echo "Checking freedreno_devices.py syntax..."
@@ -116,7 +102,7 @@ prepare_source(){
     cd .. 
     
 	commit_hash=$(git rev-parse HEAD)
-	version_str="Whitebelyash-Gen8+MR39254"
+	version_str="Whitebelyash-Gen8"
 	cd "$workdir"
 }
 
@@ -198,7 +184,7 @@ package_driver(){
 {
   "schemaVersion": 1,
   "name": "$meta_name",
-  "description": "Turnip Gen8 V15 + MR39254. Commit $short_hash",
+  "description": "Turnip Gen8 V15. Commit $short_hash",
   "author": "StevenMX",
   "driverVersion": "$version_str",
   "libraryName": "vulkan.ad08XX.so"
@@ -217,8 +203,8 @@ generate_release_info() {
 	local short_hash=${commit_hash:0:7}
 
     echo "Turnip-Gen8-${date_tag}-${short_hash}" > tag
-    echo "Turnip Gen8 (Whitebelyash + MR39254) - ${date_tag}" > release
-    echo "Automated Build from Whitebelyash/gen8 with upstream MR39254." > description
+    echo "Turnip Gen8 (Whitebelyash) - ${date_tag}" > release
+    echo "Automated Build from Whitebelyash/gen8. Includes DXVK fixes." > description
 }
 
 check_deps
