@@ -1,9 +1,9 @@
 name: Turnip Gen8 Single Build
 
 on:
-  workflow_dispatch: # Botão manual
+  workflow_dispatch:
   schedule:
-    - cron: '0 */12 * * *' # Roda a cada 12h
+    - cron: '0 */12 * * *'
 
 jobs:
   build-driver:
@@ -17,24 +17,19 @@ jobs:
       - name: Setup Dependencies
         run: |
           sudo apt-get update
-          # ADICIONADO: glslang-tools (Obrigatório para Vulkan Shaders)
-          # REMOVIDO: meson (Instalaremos via pip para ser mais novo)
           sudo apt-get install -y ninja-build patchelf unzip flex bison git perl python3-pip glslang-tools
-          
-          # Instala Meson e Mako via PIP (Versão > 1.4.0)
           pip3 install --upgrade meson mako
 
       - name: Calculate Version
         id: version
-        # Calcula a versão (Run 1 = V11, Run 2 = V12...)
         run: echo "V_NUM=$((GITHUB_RUN_NUMBER + 10))" >> $GITHUB_ENV
 
       - name: Make Script Executable
         run: chmod +x turnip_builder.sh
 
-      # --- COMPILAÇÃO ÚNICA ---
       - name: Build Driver V${{ env.V_NUM }}
-        run: ./turnip_builder.sh STD ${{ env.V_NUM }}
+        # Nota: Seu script não lê argumentos ($1, $2), então passar "STD" aqui não muda nada, mas não quebra.
+        run: ./turnip_builder.sh
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -50,10 +45,8 @@ jobs:
           name: Turnip Gen8 V${{ env.V_NUM }}
           body: |
             **Automated Single Build**
-            
             - **Base:** RobClark (Bleeding Edge)
-            - **Hacks:** Adreno 830 Support (gen8-hacks)
-            - **Fixes:** DXVK Geometry/Tessellation Fix + Syntax Fixes
+            - **Hacks:** Adreno 830 Support
             - **Target:** Android 16 (SDK 36)
           files: |
             turnip_workdir/*.zip
