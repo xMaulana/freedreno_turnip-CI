@@ -1,59 +1,52 @@
-name: Turnip Gen8 Single Build
+name: Turnip A8xx Builder
 
 on:
-  workflow_dispatch: # Botão manual
-  schedule:
-    - cron: '0 */12 * * *' # Roda a cada 12h
+  workflow_dispatch:
+    inputs:
+      build_id:
+        description: 'Version Tag (e.g. v1)'
+        required: true
+        default: 'v1'
 
 jobs:
-  build-driver:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
+  compile_driver:
+    name: Compiling Turnip ${{ inputs.build_id }}
+    runs-on: ubuntu-24.04
+    
     steps:
-      - name: Checkout CI Repo
-        uses: actions/checkout@v3
+      - name: Checkout Source
+        uses: actions/checkout@v4
 
-      - name: Setup Dependencies
+      - name: Install Build Tools
         run: |
+          # Habilitando fontes deb-src para dependências de build
+          sudo sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources
           sudo apt-get update
-          # ADICIONADO: glslang-tools (Obrigatório para Vulkan Shaders)
-          # REMOVIDO: meson (Instalaremos via pip para ser mais novo)
-          sudo apt-get install -y ninja-build patchelf unzip flex bison git perl python3-pip glslang-tools
-          
-          # Instala Meson e Mako via PIP (Versão > 1.4.0)
-          pip3 install --upgrade meson mako
+          # Instalando tudo em um comando só para ser mais rápido
+          sudo apt-get install -y build-essential flex bison glslang-tools meson python3-pip ninja-build pkg-config
 
-      - name: Calculate Version
-        id: version
-        # Calcula a versão (Run 1 = V11, Run 2 = V12...)
-        run: echo "V_NUM=$((GITHUB_RUN_NUMBER + 10))" >> $GITHUB_ENV
+      - name: Run Build Script
+        run: |
+          chmod +x build_driver.sh
+          ./build_driver.sh "${{ inputs.build_id }}"
 
-      - name: Make Script Executable
-        run: chmod +x turnip_builder.sh
-
-      # --- COMPILAÇÃO ÚNICA ---
-      - name: Build Driver V${{ env.V_NUM }}
-        run: ./turnip_builder.sh STD ${{ env.V_NUM }}
-
-      - name: Upload Artifact
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Mesa-Turnip-Gen8-V${{ env.V_NUM }}
-          path: turnip_workdir/*.zip
+          name: Turnip-A8xx-${{ inputs.build_id }}
+          path: out/*.zip
 
-      - name: Release
+      - name: Create Release
         uses: softprops/action-gh-release@v1
-        if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
         with:
-          tag_name: V${{ env.V_NUM }}
-          name: Turnip Gen8 V${{ env.V_NUM }}
+          tag_name: ${{ inputs.build_id }}
+          name: Turnip A8xx ${{ inputs.build_id }}
+          files: out/*.zip
           body: |
-            **Automated Single Build**
+            **Automated Build - A8xx Series**
             
-            - **Base:** RobClark (Bleeding Edge)
-            - **Hacks:** Adreno 830 Support (gen8-hacks)
-            - **Fixes:** DXVK Geometry/Tessellation Fix + Syntax Fixes
-            - **Target:** Android 16 (SDK 36)
-          files: |
-            turnip_workdir/*.zip
+            - **Source:** Whitebelyash (gen8-hacks)
+            - **Compatibility:** Adreno 830/840 (Optimized for Switch Emulators)
+            - **Fixes:** `libbacktrace` disabled (Fixes crash on Yuzu/Sudachi)
+            
+            *Built with NDK r29 & LLVM*
