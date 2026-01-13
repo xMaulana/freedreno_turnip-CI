@@ -1,13 +1,13 @@
 #!/bin/bash
 set -e
 
-# --- ESTÉTICA (Para parecer diferente) ---
+
 BOLD='\033[1m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 log() { echo -e "${BLUE}${BOLD}[BUILD]${NC} $1"; }
 
-# --- VARIÁVEIS (Mesmos valores do script que funciona) ---
+
 TAG="$1"
 [ -z "$TAG" ] && TAG="dev"
 
@@ -16,7 +16,7 @@ OUT="$(pwd)/out"
 NDK_PKG="android-ndk-r29" # Usando r29 igual ao original
 SDK_VER="34"              # SDK 34 para ferramentas
 
-# Repositório Whitebelyash
+
 REPO="https://github.com/whitebelyash/mesa-tu8"
 BRANCH="gen8-hacks"
 
