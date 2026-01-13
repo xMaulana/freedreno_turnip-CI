@@ -1,51 +1,32 @@
-name: Turnip Gen8 Single Build
+name: Turnip Build
+
 on:
-  workflow_dispatch:
+  workflow_dispatch: # Isso cria o botão manual
   schedule:
-    - cron: '0 */12 * * *'
+    - cron: '0 */12 * * *' # Roda automaticamente a cada 12h
 
 jobs:
-  build-driver:
+  build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    
     steps:
-      - name: Checkout CI Repo
+      - name: Checkout do Repositório
         uses: actions/checkout@v3
 
-      - name: Setup Dependencies
+      - name: Instalar Dependências
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build patchelf unzip flex bison git perl python3-pip glslang-tools
           pip3 install --upgrade meson mako
 
-      - name: Calculate Version
-        id: version
-        run: echo "V_NUM=$((GITHUB_RUN_NUMBER + 10))" >> $GITHUB_ENV
-
-      - name: Make Script Executable
+      - name: Tornar o Script Executável
         run: chmod +x turnip_builder.sh
 
-      - name: Build Driver V${{ env.V_NUM }}
-        # Nota: Seu script não lê argumentos ($1, $2), então passar "STD" aqui não muda nada, mas não quebra.
-        run: /turnip_builder.sh
+      - name: Compilar Driver
+        run: ./turnip_builder.sh
 
-      - name: Upload Artifact
+      - name: Upload do Driver (Artifact)
         uses: actions/upload-artifact@v4
         with:
-          name: Mesa-Turnip-Gen8-V${{ env.V_NUM }}
+          name: driver-turnip
           path: turnip_workdir/*.zip
-
-      - name: Release
-        uses: softprops/action-gh-release@v1
-        if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
-        with:
-          tag_name: V${{ env.V_NUM }}
-          name: Turnip Gen8 V${{ env.V_NUM }}
-          body: |
-            **Automated Single Build**
-            - **Base:** RobClark (Bleeding Edge)
-            - **Hacks:** Adreno 830 Support
-            - **Target:** Android 16 (SDK 36)
-          files: |
-            turnip_workdir/*.zip
