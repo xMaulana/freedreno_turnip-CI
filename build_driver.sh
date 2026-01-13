@@ -1,63 +1,54 @@
 #!/bin/bash
 set -e
 
-# --- CORES E FORMATAÇÃO ---
+# --- ESTÉTICA (Para parecer diferente) ---
 BOLD='\033[1m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+NC='\033[0m'
+log() { echo -e "${BLUE}${BOLD}[BUILD]${NC} $1"; }
 
-log() { echo -e "${BLUE}${BOLD}[BUILDER]${NC} $1"; }
+# --- VARIÁVEIS (Mesmos valores do script que funciona) ---
+TAG="$1"
+[ -z "$TAG" ] && TAG="dev"
 
+ROOT="$(pwd)/workspace"
+OUT="$(pwd)/out"
+NDK_PKG="android-ndk-r29" # Usando r29 igual ao original
+SDK_VER="34"              # SDK 34 para ferramentas
 
-VERSION_TAG="$1"
-if [ -z "$VERSION_TAG" ]; then VERSION_TAG="dev"; fi
-
-ROOT_DIR="$(pwd)/workspace"
-OUT_DIR="$(pwd)/out"
-NDK_VER="android-ndk-r29" # Usando r29 igual ao original para garantir compatibilidade
-SDK_API="34" 
-
-
-REPO_URL="https://github.com/whitebelyash/mesa-tu8"
+# Repositório Whitebelyash
+REPO="https://github.com/whitebelyash/mesa-tu8"
 BRANCH="gen8-hacks"
 
+mkdir -p "$ROOT" "$OUT"
+cd "$ROOT"
 
-PYTHON_DEPS="mako meson"
-
-# --- INÍCIO ---
-mkdir -p "$ROOT_DIR" "$OUT_DIR"
-cd "$ROOT_DIR"
-
-log "Checking dependencies..."
-pip3 install $PYTHON_DEPS --break-system-packages > /dev/null 2>&1 || pip3 install $PYTHON_DEPS > /dev/null 2>&1
-
-# --- SETUP NDK ---
-if [ ! -d "$NDK_VER" ]; then
-    log "Downloading NDK ($NDK_VER)..."
-    curl -L -o ndk.zip "https://dl.google.com/android/repository/${NDK_VER}-linux.zip" > /dev/null
-    log "Extracting NDK..."
+# --- 1. PREPARAR NDK ---
+if [ ! -d "$NDK_PKG" ]; then
+    log "Downloading NDK r29..."
+    curl -L -o ndk.zip "https://dl.google.com/android/repository/${NDK_PKG}-linux.zip" > /dev/null
     unzip -q ndk.zip
     rm ndk.zip
 fi
-export ANDROID_NDK_HOME="$ROOT_DIR/$NDK_VER"
+export ANDROID_NDK_HOME="$ROOT/$NDK_PKG"
 NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
 export PATH="$NDK_BIN:$PATH"
 
-# --- CLONANDO FONTE ---
+# --- 2. BAIXAR FONTE ---
 if [ -d "mesa" ]; then rm -rf mesa; fi
 log "Cloning Mesa ($BRANCH)..."
-git clone --depth 1 --branch "$BRANCH" "$REPO_URL" mesa
+git clone --depth 1 --branch "$BRANCH" "$REPO" mesa
 cd mesa
 
-# --- CONFIGURANDO MESON ---
-CROSS_FILE="android-cross.txt"
-log "Generating Cross-Compilation file..."
+# --- 3. CONFIGURAR AMBIENTE (Simulando o native.txt e android.txt do original) ---
+CROSS="android-cross.txt"
+log "Generating config..."
 
-# Truque: Definir os caminhos explicitamente para evitar symlinks
-cat <<EOF > "$CROSS_FILE"
+# O segredo: Usar os compiladores do NDK r29 explicitamente
+cat <<EOF > "$CROSS"
 [binaries]
-c = '$NDK_BIN/aarch64-linux-android${SDK_API}-clang'
-cpp = '$NDK_BIN/aarch64-linux-android${SDK_API}-clang++'
+c = '$NDK_BIN/aarch64-linux-android${SDK_VER}-clang'
+cpp = '$NDK_BIN/aarch64-linux-android${SDK_VER}-clang++'
 ar = '$NDK_BIN/llvm-ar'
 strip = '$NDK_BIN/llvm-strip'
 pkg-config = ['env', 'PKG_CONFIG_LIBDIR=$ANDROID_NDK_HOME/pkg-config', '/usr/bin/pkg-config']
@@ -69,16 +60,17 @@ cpu = 'armv8'
 endian = 'little'
 EOF
 
+# --- 4. COMPILAÇÃO (Onde a mágica acontece) ---
 BUILD_DIR="build-android"
-log "Configuring Build (Meson)..."
 
-# AS FLAGS MÁGICAS (Essenciais para funcionar igual ao outro)
-# -Dandroid-libbacktrace=disabled -> O SEGREDO para não crashar no Yuzu
-# -Dvideo-codecs= -> Remove bloatware
-# -Dplatform-sdk-version=36 -> Otimização para Android 15/16
+# AS FLAGS CRÍTICAS DO SCRIPT QUE FUNCIONA:
+# 1. -Dandroid-libbacktrace=disabled (Vital para Yuzu/Switch)
+# 2. -Dplatform-sdk-version=36 (Otimização Adreno 8xx)
+# 3. -Dvideo-codecs= (Remove lixo)
 
+log "Running Meson..."
 meson setup "$BUILD_DIR" \
-    --cross-file "$CROSS_FILE" \
+    --cross-file "$CROSS" \
     -Dbuildtype=release \
     -Dplatforms=android \
     -Dplatform-sdk-version=36 \
@@ -97,25 +89,27 @@ meson setup "$BUILD_DIR" \
 log "Compiling (Ninja)..."
 ninja -C "$BUILD_DIR"
 
-# --- EMPACOTAMENTO ---
-LIB_PATH="$BUILD_DIR/src/freedreno/vulkan/libvulkan_freedreno.so"
+# --- 5. EMPACOTAMENTO ---
+LIB_FILE="$BUILD_DIR/src/freedreno/vulkan/libvulkan_freedreno.so"
 
-if [ ! -f "$LIB_PATH" ]; then
-    echo "Erro: Driver não compilou!"
+if [ ! -f "$LIB_FILE" ]; then
+    echo "Erro: Falha na compilação!"
     exit 1
 fi
 
-log "Packaging..."
-PKG_DIR="package_tmp"
-mkdir -p "$PKG_DIR"
-cp "$LIB_PATH" "$PKG_DIR/libvulkan_freedreno.so"
+log "Creating Zip..."
+TMP_PKG="package_tmp"
+rm -rf "$TMP_PKG" && mkdir -p "$TMP_PKG"
 
-# Criando JSON
-cat <<EOF > "$PKG_DIR/meta.json"
+# Copia com o nome original (libvulkan_freedreno.so) pois emuladores gostam disso
+cp "$LIB_FILE" "$TMP_PKG/libvulkan_freedreno.so"
+
+# JSON idêntico ao original, apenas mudando o autor
+cat <<EOF > "$TMP_PKG/meta.json"
 {
   "schemaVersion": 1,
-  "name": "Turnip A8xx $VERSION_TAG",
-  "description": "Adreno 8xx Driver. Built from gen8-hacks.",
+  "name": "Turnip A8xx $TAG",
+  "description": "Adreno 8xx Driver. Built from gen8-hacks. Libbacktrace disabled.",
   "author": "Turnip CI",
   "packageVersion": "1",
   "vendor": "Mesa",
@@ -125,8 +119,8 @@ cat <<EOF > "$PKG_DIR/meta.json"
 }
 EOF
 
-cd "$PKG_DIR"
-ZIP_NAME="$OUT_DIR/Turnip-A8xx-${VERSION_TAG}.zip"
+cd "$TMP_PKG"
+ZIP_NAME="$OUT/Turnip-A8xx-${TAG}.zip"
 zip -q -9 "$ZIP_NAME" libvulkan_freedreno.so meta.json
 
-log "Done! Artifact at: $ZIP_NAME"
+log "Success! Output: $ZIP_NAME"
