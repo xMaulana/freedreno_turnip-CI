@@ -1,5 +1,4 @@
 name: Turnip Gen8 Single Build
-
 on:
   workflow_dispatch:
   schedule:
@@ -29,7 +28,7 @@ jobs:
 
       - name: Build Driver V${{ env.V_NUM }}
         # Nota: Seu script não lê argumentos ($1, $2), então passar "STD" aqui não muda nada, mas não quebra.
-        run: ./turnip_builder.sh
+        run: /turnip_builder.sh
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
