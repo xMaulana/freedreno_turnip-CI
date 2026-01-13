@@ -19,7 +19,7 @@ base_branch="tu/gen8"
 
 # HACKS: Whitebelyash (A830 Support)
 hacks_repo="https://github.com/whitebelyash/mesa-tu8.git"
-hacks_branch="gen8-hacks"
+hacks_branch="gen8"
 
 # Commit que quebra o DXVK (Vamos reverter ele)
 bad_commit="2f0ea1c6"
