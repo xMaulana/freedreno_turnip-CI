@@ -5,7 +5,7 @@ green='\033[0;32m'
 red='\033[0;31m'
 nocolor='\033[0m'
 
-# ADICIONADO: glslangValidator (necessário para Mesa novo)
+# Dependências
 deps="ninja patchelf unzip curl pip flex bison zip git perl glslangValidator"
 workdir="$(pwd)/turnip_workdir"
 
@@ -13,15 +13,11 @@ workdir="$(pwd)/turnip_workdir"
 ndkver="android-ndk-r28"
 target_sdk="36"
 
-# BASE: Rob Clark (Bleeding Edge)
-base_repo="https://gitlab.freedesktop.org/robclark/mesa.git"
-base_branch="tu/gen8"
+# NOVA BASE: Whitebelyash (Gen8 Direct)
+base_repo="https://github.com/whitebelyash/mesa-tu8.git"
+base_branch="gen8"
 
-# HACKS: Whitebelyash (A830 Support)
-hacks_repo="https://github.com/whitebelyash/mesa-tu8.git"
-hacks_branch="gen8"
-
-# Commit que quebra o DXVK (Vamos reverter ele)
+# Commit problemático (Tenta reverter, se não achar, usa patch manual)
 bad_commit="2f0ea1c6"
 
 commit_hash=""
@@ -38,12 +34,9 @@ check_deps(){
 		fi
 	done
 	if [ "$missing" == "1" ]; then
-		echo "Please install missing dependencies (ex: sudo apt install glslang-tools python3-pip ...)." && exit 1
+		echo "Please install missing dependencies." && exit 1
 	fi
     
-    # CORREÇÃO MESON 1.4.0:
-    # Instalamos o meson via PIP para garantir a versão mais recente.
-    # O do apt (sistema) geralmente é velho (1.3.2).
 	echo "Updating Meson via pip..."
 	pip install meson mako --break-system-packages &> /dev/null || pip install meson mako &> /dev/null || true
 }
@@ -66,53 +59,41 @@ prepare_source(){
 	cd "$workdir"
 	if [ -d mesa ]; then rm -rf mesa; fi
 	
-    # 1. Clona BASE (Rob Clark - Último Commit)
-    echo "Cloning Base: $base_repo ($base_branch)..."
-	git clone --branch "$base_branch" "$base_repo" mesa
+    # 1. Clona DIRETAMENTE do Whitebelyash
+    echo "Cloning Source: $base_repo ($base_branch)..."
+	git clone --branch "$base_branch" --depth 100 "$base_repo" mesa
 	cd mesa
     
-    # LOG: Mostra qual o commit base
-    echo -e "${green}Current Rob Clark Commit:${nocolor}"
+    echo -e "${green}Current Commit:${nocolor}"
     git log -1 --format="%H - %cd - %s"
 
     git config user.email "ci@turnip.builder"
     git config user.name "Turnip CI Builder"
 
-    # 2. Prepara os HACKS
-    echo "Fetching Hacks from: $hacks_repo..."
-    git remote add hacks "$hacks_repo"
-    git fetch hacks "$hacks_branch"
-    
-    # 3. SMART MERGE HACKS
-    echo "Attempting Merge Hacks..."
-    if ! git merge --no-edit "hacks/$hacks_branch" --allow-unrelated-histories; then
-        echo -e "${red}Merge Conflict detected! Resolving intelligently...${nocolor}"
-        git checkout --theirs .
-        git add .
-        git commit -m "Auto-resolved conflicts by accepting Hacks"
-        echo -e "${green}Conflicts resolved. Hacks applied successfully.${nocolor}"
+    # --- CORREÇÃO DE SINTAXE (Se necessário) ---
+    echo "Checking freedreno_devices.py syntax..."
+    if [ -f "src/freedreno/common/freedreno_devices.py" ]; then
+        perl -i -p0e 's/(\n\s*a8xx_825)/,$1/s' src/freedreno/common/freedreno_devices.py
     fi
 
-    # --- CORREÇÃO DE SINTAXE (A825 MISSING COMMA) ---
-    echo "Fixing freedreno_devices.py syntax..."
-    perl -i -p0e 's/(\n\s*a8xx_825)/,$1/s' src/freedreno/common/freedreno_devices.py
-
-    # 4. REVERT DO COMMIT QUE MATA O DXVK
-    echo -e "${green}Attempting to REVERT commit $bad_commit (Enable GS/Tess)...${nocolor}"
+    # 2. DXVK FIX (GS/Tessellation)
+    echo -e "${green}Applying DXVK Fixes...${nocolor}"
     
-    if git revert --no-edit "$bad_commit"; then
-        echo -e "${green}SUCCESS: Reverted GS/Tess disable! DXVK should work.${nocolor}"
+    # Tenta reverter via git primeiro
+    if git revert --no-edit "$bad_commit" 2>/dev/null; then
+        echo -e "${green}SUCCESS: Reverted commit $bad_commit via Git.${nocolor}"
     else
-        echo -e "${red}Git revert failed (hash changed?). Trying manual SED patch...${nocolor}"
+        echo -e "${red}Git revert failed (commit not found or conflict). Applying MANUAL patch...${nocolor}"
         git revert --abort || true
-        # Fallback manual para reativar GS/Tess
+        
+        # Patch Manual: Garante que chip=8 não seja bloqueado
         find src/freedreno/vulkan -name "*.cc" -print0 | xargs -0 sed -i 's/ && (pdevice->info->chip != 8)//g'
         find src/freedreno/vulkan -name "*.cc" -print0 | xargs -0 sed -i 's/ && (pdevice->info->chip == 8)//g'
         echo "Applied manual patch via SED to enable GS/Tess."
     fi
 
     # --- SPIRV Manual ---
-    echo "Manually cloning dependencies..."
+    echo "Cloning SPIRV dependencies..."
     mkdir -p subprojects
     cd subprojects
     rm -rf spirv-tools spirv-headers
@@ -121,7 +102,7 @@ prepare_source(){
     cd .. 
     
 	commit_hash=$(git rev-parse HEAD)
-	version_str="RobClark-BleedingEdge"
+	version_str="Whitebelyash-Gen8"
 	cd "$workdir"
 }
 
@@ -133,10 +114,9 @@ compile_mesa(){
 	local ndk_bin_path="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
 	local ndk_sysroot_path="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
 
-    # Fallback compilador
     local compiler_ver="35"
     if [ ! -f "$ndk_bin_path/aarch64-linux-android${compiler_ver}-clang" ]; then compiler_ver="34"; fi
-    echo "Using compiler binary: $compiler_ver (Targeting API $target_sdk)"
+    echo "Using compiler: Clang $compiler_ver"
 
 	local cross_file="$source_dir/android-aarch64-crossfile.txt"
 	cat <<EOF > "$cross_file"
@@ -196,23 +176,23 @@ package_driver(){
 
 	cd "$package_temp"
 	patchelf --set-soname "vulkan.adreno.so" lib_temp.so
-	mv lib_temp.so "vulkan.ad07XX.so"
+	mv lib_temp.so "vulkan.ad08XX.so"
 
 	local short_hash=${commit_hash:0:7}
-	local meta_name="Turnip-A830-BleedingEdge-${short_hash}"
+	local meta_name="Turnip-Gen8-Whitebelyash-${short_hash}"
 	cat <<EOF > meta.json
 {
   "schemaVersion": 1,
   "name": "$meta_name",
-  "description": "Turnip Gen8 (RobClark Latest + Hacks + DXVK Fix). Commit $short_hash",
-  "author": "mesa-ci",
+  "description": "Turnip Gen8 V15. Commit $short_hash",
+  "author": "StevenMX",
   "driverVersion": "$version_str",
-  "libraryName": "vulkan.ad07XX.so"
+  "libraryName": "vulkan.ad08XX.so"
 }
 EOF
 
-	local zip_name="Turnip-A830-BleedingEdge-${short_hash}.zip"
-	zip -9 "$workdir/$zip_name" "vulkan.ad07XX.so" meta.json
+	local zip_name="Turnip-Gen8-Whitebelyash-${short_hash}.zip"
+	zip -9 "$workdir/$zip_name" "vulkan.ad08XX.so" meta.json
 	echo -e "${green}Package ready: $workdir/$zip_name${nocolor}"
 }
 
@@ -222,9 +202,9 @@ generate_release_info() {
     local date_tag=$(date +'%Y%m%d')
 	local short_hash=${commit_hash:0:7}
 
-    echo "Turnip-BleedingEdge-${date_tag}-${short_hash}" > tag
-    echo "Turnip A830 (RobClark Latest) - ${date_tag}" > release
-    echo "Automated Turnip Build. Features: SDK 36, Hacks, DXVK Fix. No extra MRs." > description
+    echo "Turnip-Gen8-${date_tag}-${short_hash}" > tag
+    echo "Turnip Gen8 (Whitebelyash) - ${date_tag}" > release
+    echo "Automated Build from Whitebelyash/gen8. Includes DXVK fixes." > description
 }
 
 check_deps
