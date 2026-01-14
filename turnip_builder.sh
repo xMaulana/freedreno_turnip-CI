@@ -13,7 +13,7 @@ workdir="$(pwd)/turnip_workdir"
 ndkver="android-ndk-r28"
 target_sdk="36"
 
-# 1. BASE: Mesa Oficial (Para buscar a MR)
+# 1. BASE: Mesa Oficial
 base_repo="https://gitlab.freedesktop.org/mesa/mesa.git"
 
 # 2. HACKS: Whitebelyash (Gen8 patches)
@@ -62,7 +62,7 @@ prepare_source(){
 	cd "$workdir"
 	if [ -d mesa ]; then rm -rf mesa; fi
 	
-    # 1. Clona Mesa Oficial (Sem checkout inicial pesado)
+    # 1. Clona Mesa Oficial
     echo "Cloning Official Mesa..."
 	git clone --depth 100 "$base_repo" mesa
 	cd mesa
@@ -73,8 +73,6 @@ prepare_source(){
     # 2. FETCH DA MR 39167 (Rob Clark - Elite Support)
     echo -e "${green}Fetching Rob Clark MR 39167 (Gen8 Support)...${nocolor}"
     git fetch "$base_repo" refs/merge-requests/39167/head:mr-39167
-    
-    # Muda para a branch da MR
     git checkout mr-39167
     
     echo -e "${green}Base Commit (MR 39167):${nocolor}"
@@ -86,7 +84,6 @@ prepare_source(){
     git fetch hacks "$hacks_branch"
     
     echo "Attempting Merge Hacks..."
-    # Tenta merge, se der conflito aceita "theirs" (os hacks)
     if ! git merge --no-edit "hacks/$hacks_branch" --allow-unrelated-histories; then
         echo -e "${red}Merge Conflict detected! Resolving by accepting Hacks...${nocolor}"
         git checkout --theirs .
@@ -95,13 +92,122 @@ prepare_source(){
         echo -e "${green}Conflicts resolved. Hacks applied successfully.${nocolor}"
     fi
 
-    # --- CORREÇÃO DE SINTAXE (Comum ao mesclar hacks) ---
     echo "Fixing freedreno_devices.py syntax..."
     if [ -f "src/freedreno/common/freedreno_devices.py" ]; then
         perl -i -p0e 's/(\n\s*a8xx_825)/,$1/s' src/freedreno/common/freedreno_devices.py
     fi
 
-    # 4. DXVK FIX (GS/Tessellation)
+    # [cite_start]4. APLICAÇÃO DO PATCH SEMAPHORE (CORRIGIDO) [cite: 1, 28]
+    echo -e "${green}Applying Semaphore Wait Patch...${nocolor}"
+    
+    # Criamos o arquivo .patch limpo aqui mesmo
+cat << 'EOF' > semaphore_fix.patch
+diff --git a/src/vulkan/runtime/vk_sync_timeline.c b/src/vulkan/runtime/vk_sync_timeline.c
+--- a/src/vulkan/runtime/vk_sync_timeline.c
++++ b/src/vulkan/runtime/vk_sync_timeline.c
+@@ -436,45 +436,26 @@ static VkResult
+ vk_sync_timeline_wait_locked(struct vk_device *device,
+                              struct vk_sync_timeline_state *state,
+                              uint64_t wait_value,
+                              enum vk_sync_wait_flags wait_flags,
+                              uint64_t abs_timeout_ns)
+ {
+    struct timespec abs_timeout_ts;
+    timespec_from_nsec(&abs_timeout_ts, abs_timeout_ns);
+ 
+-   /* Wait on the queue_submit condition variable until the timeline has a
+-    * time point pending that's at least as high as wait_value.
+-    */
+-   while (state->highest_pending < wait_value) {
+-      int ret = u_cnd_monotonic_timedwait(&state->cond, &state->mutex,
+-                                          &abs_timeout_ts);
+-      if (ret == thrd_timedout)
+-         return VK_TIMEOUT;
+-
+-      if (ret != thrd_success)
+-         return vk_errorf(device, VK_ERROR_UNKNOWN, "cnd_timedwait failed");
+-   }
+-
+-   if (wait_flags & VK_SYNC_WAIT_PENDING)
+-      return VK_SUCCESS;
+-
+-   VkResult result = vk_sync_timeline_gc_locked(device, state, false);
+-   if (result != VK_SUCCESS)
+-      return result;
+-
+-   while (state->highest_past < wait_value) {
+-      struct vk_sync_timeline_point *point = vk_sync_timeline_first_point(state);
+-
+-      /* Drop the lock while we wait. */
+-      vk_sync_timeline_ref_point_locked(point);
+-      mtx_unlock(&state->mutex);
+-
+-      result = vk_sync_wait(device, &point->sync, 0,
+-                            VK_SYNC_WAIT_COMPLETE,
+-                            abs_timeout_ns);
+-
+-      /* Pick the mutex back up */
+-      mtx_lock(&state->mutex);
+-      vk_sync_timeline_unref_point_locked(device, state, point);
+-
+-      /* This covers both VK_TIMEOUT and VK_ERROR_DEVICE_LOST */
+-      if (result != VK_SUCCESS)
+-         return result;
+-
+-      vk_sync_timeline_complete_point_locked(device, state, point);
+-   }
+-
+-   return VK_SUCCESS;
++    /* Wait until the timeline reaches the requested value */
++    while (state->highest_past < wait_value) {
++        struct vk_sync_timeline_point *point = NULL;
++
++        /* Get the first pending point >= wait_value */
++        list_for_each_entry(struct vk_sync_timeline_point, p,
++                            &state->pending_points, link) {
++            if (p->value >= wait_value) {
++                vk_sync_timeline_ref_point_locked(p);
++                point = p;
++                break;
++            }
++        }
++
++        if (!point) {
++            /* Nothing pending, just wait on condition variable */
++            int ret = u_cnd_monotonic_timedwait(&state->cond, &state->mutex, &abs_timeout_ts);
++            if (ret == thrd_timedout)
++                return VK_TIMEOUT;
++            if (ret != thrd_success)
++                return vk_errorf(device, VK_ERROR_UNKNOWN, "cnd_timedwait failed");
++            continue;
++        }
++
++        /* Unlock while waiting on this specific timeline point */
++        mtx_unlock(&state->mutex);
++        VkResult r = vk_sync_wait(device, &point->sync, 0, VK_SYNC_WAIT_COMPLETE, abs_timeout_ns);
++        mtx_lock(&state->mutex);
++
++        vk_sync_timeline_unref_point_locked(device, state, point);
++
++        if (r != VK_SUCCESS)
++            return r;
++
++        vk_sync_timeline_complete_point_locked(device, state, point);
++    }
++
++    return VK_SUCCESS;
+ }
+EOF
+    
+    # Aplica ignorando espaço em branco para evitar erro "malformed patch"
+    if git apply --ignore-space-change --ignore-whitespace semaphore_fix.patch; then
+        echo -e "${green}SUCCESS: Semaphore Patch applied!${nocolor}"
+    else
+        echo -e "${red}Semaphore Patch Failed! Retrying with 3-way merge...${nocolor}"
+        git apply -3 semaphore_fix.patch || echo -e "${red}Final Failure on Patch.${nocolor}"
+    fi
+
+    # 5. DXVK FIX (GS/Tessellation)
     echo -e "${green}Applying DXVK Fixes...${nocolor}"
     
     if git revert --no-edit "$bad_commit" 2>/dev/null; then
@@ -124,7 +230,7 @@ prepare_source(){
     cd .. 
     
 	commit_hash=$(git rev-parse HEAD)
-	version_str="MR39167-Plus-Hacks"
+	version_str="MR39167-Hacks-SemaphoreFix"
 	cd "$workdir"
 }
 
@@ -201,19 +307,19 @@ package_driver(){
 	mv lib_temp.so "vulkan.ad08XX.so"
 
 	local short_hash=${commit_hash:0:7}
-	local meta_name="Turnip-MR39167-Hacks-${short_hash}"
+	local meta_name="Turnip-MR39167-Plus-SemaphoreFix-${short_hash}"
 	cat <<EOF > meta.json
 {
   "schemaVersion": 1,
   "name": "$meta_name",
-  "description": "Turnip Hybrid (RobClark MR 39167 + Hacks). Commit $short_hash",
+  "description": "Turnip Hybrid (RobClark MR 39167 + Hacks + Semaphore Fix). Commit $short_hash",
   "author": "StevenMX",
   "driverVersion": "$version_str",
   "libraryName": "vulkan.ad08XX.so"
 }
 EOF
 
-	local zip_name="Turnip-MR39167-Hacks-${short_hash}.zip"
+	local zip_name="Turnip-MR39167-Plus-SemaphoreFix-${short_hash}.zip"
 	zip -9 "$workdir/$zip_name" "vulkan.ad08XX.so" meta.json
 	echo -e "${green}Package ready: $workdir/$zip_name${nocolor}"
 }
@@ -224,9 +330,9 @@ generate_release_info() {
     local date_tag=$(date +'%Y%m%d')
 	local short_hash=${commit_hash:0:7}
 
-    echo "Turnip-Elite-${date_tag}-${short_hash}" > tag
-    echo "Turnip Elite (MR 39167 + Hacks) - ${date_tag}" > release
-    echo "Base: RobClark MR 39167. Hacks: Whitebelyash/gen8. Includes DXVK fixes." > description
+    echo "Turnip-Elite-Fixed-${date_tag}-${short_hash}" > tag
+    echo "Turnip Elite (Fixed Semaphore) - ${date_tag}" > release
+    echo "Base: RobClark MR 39167. Hacks: Whitebelyash/gen8. Includes Semaphore Fix & DXVK fixes." > description
 }
 
 check_deps
