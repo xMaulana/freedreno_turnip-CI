@@ -247,8 +247,9 @@ endian = 'little'
 EOF
 
 	cd "$source_dir"
-	export CFLAGS="-D__ANDROID__"
-	export CXXFLAGS="-D__ANDROID__"
+	# CORREÇÃO CRÍTICA: Desabilita "Treat Warnings as Errors"
+	export CFLAGS="-D__ANDROID__ -Wno-error"
+	export CXXFLAGS="-D__ANDROID__ -Wno-error"
 
 	meson setup "$build_dir" --cross-file "$cross_file" \
 		-Dbuildtype=release \
@@ -264,6 +265,7 @@ EOF
 		-Dvulkan-beta=true \
 		-Ddefault_library=shared \
         -Dzstd=disabled \
+        -Dwerror=false \
         --force-fallback-for=spirv-tools,spirv-headers \
 		2>&1 | tee "$workdir/meson_log"
 
