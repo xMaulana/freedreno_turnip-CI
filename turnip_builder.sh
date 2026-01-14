@@ -97,114 +97,72 @@ prepare_source(){
         perl -i -p0e 's/(\n\s*a8xx_825)/,$1/s' src/freedreno/common/freedreno_devices.py
     fi
 
-    # 4. APLICAÇÃO DO PATCH SEMAPHORE (AGORA ALINHADO À ESQUERDA)
-    echo -e "${green}Applying Semaphore Wait Patch...${nocolor}"
+    # 4. APLICAÇÃO DO PATCH SEMAPHORE (VIA SUBSTITUIÇÃO DE TEXTO PERL)
+    echo -e "${green}Applying Semaphore Wait Patch (Perl Replace)...${nocolor}"
     
-# O BLOCO ABAIXO NÃO PODE TER INDENTAÇÃO
-cat << 'EOF' > semaphore_fix.patch
-diff --git a/src/vulkan/runtime/vk_sync_timeline.c b/src/vulkan/runtime/vk_sync_timeline.c
---- a/src/vulkan/runtime/vk_sync_timeline.c
-+++ b/src/vulkan/runtime/vk_sync_timeline.c
-@@ -436,45 +436,26 @@ static VkResult
- vk_sync_timeline_wait_locked(struct vk_device *device,
-                              struct vk_sync_timeline_state *state,
-                              uint64_t wait_value,
-                              enum vk_sync_wait_flags wait_flags,
-                              uint64_t abs_timeout_ns)
- {
+    # Cria arquivo temporário com a nova função
+cat << 'EOF_NEW' > new_func_body.c
+static VkResult
+vk_sync_timeline_wait_locked(struct vk_device *device,
+                             struct vk_sync_timeline_state *state,
+                             uint64_t wait_value,
+                             enum vk_sync_wait_flags wait_flags,
+                             uint64_t abs_timeout_ns)
+{
     struct timespec abs_timeout_ts;
     timespec_from_nsec(&abs_timeout_ts, abs_timeout_ns);
- 
--   /* Wait on the queue_submit condition variable until the timeline has a
--    * time point pending that's at least as high as wait_value.
--    */
--   while (state->highest_pending < wait_value) {
--      int ret = u_cnd_monotonic_timedwait(&state->cond, &state->mutex,
--                                          &abs_timeout_ts);
--      if (ret == thrd_timedout)
--         return VK_TIMEOUT;
--
--      if (ret != thrd_success)
--         return vk_errorf(device, VK_ERROR_UNKNOWN, "cnd_timedwait failed");
--   }
--
--   if (wait_flags & VK_SYNC_WAIT_PENDING)
--      return VK_SUCCESS;
--
--   VkResult result = vk_sync_timeline_gc_locked(device, state, false);
--   if (result != VK_SUCCESS)
--      return result;
--
--   while (state->highest_past < wait_value) {
--      struct vk_sync_timeline_point *point = vk_sync_timeline_first_point(state);
--
--      /* Drop the lock while we wait. */
--      vk_sync_timeline_ref_point_locked(point);
--      mtx_unlock(&state->mutex);
--
--      result = vk_sync_wait(device, &point->sync, 0,
--                            VK_SYNC_WAIT_COMPLETE,
--                            abs_timeout_ns);
--
--      /* Pick the mutex back up */
--      mtx_lock(&state->mutex);
--      vk_sync_timeline_unref_point_locked(device, state, point);
--
--      /* This covers both VK_TIMEOUT and VK_ERROR_DEVICE_LOST */
--      if (result != VK_SUCCESS)
--         return result;
--
--      vk_sync_timeline_complete_point_locked(device, state, point);
--   }
--
--   return VK_SUCCESS;
-+    /* Wait until the timeline reaches the requested value */
-+    while (state->highest_past < wait_value) {
-+        struct vk_sync_timeline_point *point = NULL;
-+
-+        /* Get the first pending point >= wait_value */
-+        list_for_each_entry(struct vk_sync_timeline_point, p,
-+                            &state->pending_points, link) {
-+            if (p->value >= wait_value) {
-+                vk_sync_timeline_ref_point_locked(p);
-+                point = p;
-+                break;
-+            }
-+        }
-+
-+        if (!point) {
-+            /* Nothing pending, just wait on condition variable */
-+            int ret = u_cnd_monotonic_timedwait(&state->cond, &state->mutex, &abs_timeout_ts);
-+            if (ret == thrd_timedout)
-+                return VK_TIMEOUT;
-+            if (ret != thrd_success)
-+                return vk_errorf(device, VK_ERROR_UNKNOWN, "cnd_timedwait failed");
-+            continue;
-+        }
-+
-+        /* Unlock while waiting on this specific timeline point */
-+        mtx_unlock(&state->mutex);
-+        VkResult r = vk_sync_wait(device, &point->sync, 0, VK_SYNC_WAIT_COMPLETE, abs_timeout_ns);
-+        mtx_lock(&state->mutex);
-+
-+        vk_sync_timeline_unref_point_locked(device, state, point);
-+
-+        if (r != VK_SUCCESS)
-+            return r;
-+
-+        vk_sync_timeline_complete_point_locked(device, state, point);
-+    }
-+
-+    return VK_SUCCESS;
- }
-EOF
-    
-    # Aplica ignorando espaço em branco e mudanças de espaço
-    if git apply --ignore-space-change --ignore-whitespace semaphore_fix.patch; then
-        echo -e "${green}SUCCESS: Semaphore Patch applied!${nocolor}"
+
+    /* Wait until the timeline reaches the requested value */
+    while (state->highest_past < wait_value) {
+        struct vk_sync_timeline_point *point = NULL;
+
+        /* Get the first pending point >= wait_value */
+        list_for_each_entry(struct vk_sync_timeline_point, p,
+                            &state->pending_points, link) {
+            if (p->value >= wait_value) {
+                vk_sync_timeline_ref_point_locked(p);
+                point = p;
+                break;
+            }
+        }
+
+        if (!point) {
+            /* Nothing pending, just wait on condition variable */
+            int ret = u_cnd_monotonic_timedwait(&state->cond, &state->mutex, &abs_timeout_ts);
+            if (ret == thrd_timedout)
+                return VK_TIMEOUT;
+            if (ret != thrd_success)
+                return vk_errorf(device, VK_ERROR_UNKNOWN, "cnd_timedwait failed");
+            continue;
+        }
+
+        /* Unlock while waiting on this specific timeline point */
+        mtx_unlock(&state->mutex);
+        VkResult r = vk_sync_wait(device, &point->sync, 0, VK_SYNC_WAIT_COMPLETE, abs_timeout_ns);
+        mtx_lock(&state->mutex);
+
+        vk_sync_timeline_unref_point_locked(device, state, point);
+
+        if (r != VK_SUCCESS)
+            return r;
+
+        vk_sync_timeline_complete_point_locked(device, state, point);
+    }
+
+    return VK_SUCCESS;
+}
+EOF_NEW
+
+    # Usa Perl para substituir a função antiga inteira pela nova
+    # A regex procura "static VkResult vk_sync_timeline_wait_locked" até o fechamento "return VK_SUCCESS; }"
+    perl -i -0777 -pe '
+        s/static VkResult\s+vk_sync_timeline_wait_locked.*?return VK_SUCCESS;\s+}/do { local \$\/; open F, "new_func_body.c"; <F> }/se
+    ' src/vulkan/runtime/vk_sync_timeline.c
+
+    if grep -q "list_for_each_entry" src/vulkan/runtime/vk_sync_timeline.c; then
+        echo -e "${green}SUCCESS: Semaphore Patch Logic Applied!${nocolor}"
     else
-        echo -e "${red}Semaphore Patch Failed! Retrying with 3-way merge...${nocolor}"
-        git apply -3 semaphore_fix.patch || echo -e "${red}Final Failure on Patch (Check indentation).${nocolor}"
+        echo -e "${red}WARNING: Failed to inject Semaphore Patch logic. Code structure might differ.${nocolor}"
     fi
 
     # 5. DXVK FIX (GS/Tessellation)
@@ -230,7 +188,7 @@ EOF
     cd .. 
     
 	commit_hash=$(git rev-parse HEAD)
-	version_str="MR39167-Hacks-SemaphoreFix"
+	version_str="MR39167-Plus-SemaphoreFix"
 	cd "$workdir"
 }
 
