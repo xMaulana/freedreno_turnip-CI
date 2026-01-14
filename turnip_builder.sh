@@ -97,16 +97,15 @@ prepare_source(){
         perl -i -p0e 's/(\n\s*a8xx_825)/,$1/s' src/freedreno/common/freedreno_devices.py
     fi
 
-    # 4. APLICAÇÃO DO PATCH ASYNC (Semaphore Wait Many)
-    echo -e "${green}Injecting Semaphore Async (Wait Many)...${nocolor}"
+    # 4. APLICAÇÃO DO PATCH ASYNC (ADAPTADO PARA MESA NOVO)
+    echo -e "${green}Injecting Semaphore Async (Wait Many) - Adapted...${nocolor}"
     
-    # Cria arquivo com a nova função
+    # Código C adaptado para usar 'const struct vk_sync_wait *waits'
 cat << 'EOF_ASYNC' > new_wait_many.c
-VkResult
+static VkResult
 vk_sync_timeline_wait_many(struct vk_device *device,
                            uint32_t count,
-                           struct vk_sync_timeline **timelines,
-                           const uint64_t *wait_values,
+                           const struct vk_sync_wait *waits,
                            enum vk_sync_wait_flags wait_flags,
                            uint64_t abs_timeout_ns)
 {
@@ -117,9 +116,12 @@ vk_sync_timeline_wait_many(struct vk_device *device,
     while (true) {
         bool any_ready = false;
         for (i = 0; i < count; i++) {
-            struct vk_sync_timeline_state *state = timelines[i]->state;
+            struct vk_sync_timeline *timeline = to_vk_sync_timeline(waits[i].sync);
+            uint64_t wait_value = waits[i].wait_value;
+            struct vk_sync_timeline_state *state = timeline->state;
+
             mtx_lock(&state->mutex);
-            if (state->highest_past >= wait_values[i]) {
+            if (state->highest_past >= wait_value) {
                 any_ready = true;
                 mtx_unlock(&state->mutex);
                 if (wait_flags & VK_SYNC_WAIT_ANY)
@@ -130,7 +132,7 @@ vk_sync_timeline_wait_many(struct vk_device *device,
             struct vk_sync_timeline_point *point = NULL;
             list_for_each_entry(struct vk_sync_timeline_point, p,
                                 &state->pending_points, link) {
-                if (p->value >= wait_values[i]) {
+                if (p->value >= wait_value) {
                     vk_sync_timeline_ref_point_locked(p);
                     point = p;
                     break;
@@ -160,7 +162,9 @@ vk_sync_timeline_wait_many(struct vk_device *device,
         if (!(wait_flags & VK_SYNC_WAIT_ANY)) {
             bool all_ready = true;
             for (i = 0; i < count; i++) {
-                if (timelines[i]->state->highest_past < wait_values[i]) {
+                struct vk_sync_timeline *timeline = to_vk_sync_timeline(waits[i].sync);
+                uint64_t wait_value = waits[i].wait_value;
+                if (timeline->state->highest_past < wait_value) {
                     all_ready = false;
                     break;
                 }
@@ -170,11 +174,12 @@ vk_sync_timeline_wait_many(struct vk_device *device,
         }
 
         /* Wait on the first condition variable for any timeline */
-        mtx_lock(&timelines[0]->state->mutex);
-        int ret = u_cnd_monotonic_timedwait(&timelines[0]->state->cond,
-                                            &timelines[0]->state->mutex,
+        struct vk_sync_timeline *first = to_vk_sync_timeline(waits[0].sync);
+        mtx_lock(&first->state->mutex);
+        int ret = u_cnd_monotonic_timedwait(&first->state->cond,
+                                            &first->state->mutex,
                                             &abs_timeout_ts);
-        mtx_unlock(&timelines[0]->state->mutex);
+        mtx_unlock(&first->state->mutex);
         if (ret == thrd_timedout)
             return VK_TIMEOUT;
         if (ret != thrd_success)
@@ -183,7 +188,8 @@ vk_sync_timeline_wait_many(struct vk_device *device,
 }
 EOF_ASYNC
 
-    # Script Perl para INJETAR ou SUBSTITUIR a função com segurança
+    # Script Perl para INJETAR no FINAL do arquivo (antes de get_type)
+    # Isso evita erros de sintaxe por injetar dentro de outras funções
     perl -i -0777 -e '
         my $filename = "src/vulkan/runtime/vk_sync_timeline.c";
         open(my $fh, "<", $filename) or die "Cannot open $filename";
@@ -194,17 +200,20 @@ EOF_ASYNC
         my $new_func = do { local $/; <$nfh> };
         close($nfh);
 
-        if ($content =~ /VkResult\s+vk_sync_timeline_wait_many/) {
-            # Se a função já existe, SUBSTITUI ela inteira
-            print "Function exists. Replacing...\n";
-            $content =~ s/VkResult\s+vk_sync_timeline_wait_many.*?^}/$new_func/ms;
+        # Remove versão antiga se existir (para evitar duplicação)
+        $content =~ s/static VkResult\s+vk_sync_timeline_wait_many.*?^}//ms;
+
+        # Injeta ANTES de vk_sync_timeline_get_type
+        if ($content =~ s/(struct vk_sync_timeline_type\s+vk_sync_timeline_get_type)/$new_func\n\n$1/) {
+             print "Function injected correctly.\n";
+             
+             # Conecta na struct
+             if ($content =~ s/(\.wait\s*=\s*vk_sync_timeline_wait,)/$1\n         .wait_many = vk_sync_timeline_wait_many, /) {
+                 print "Struct hook connected.\n";
+             }
         } else {
-            # Se não existe, ADICIONA antes do vk_sync_timeline_get_type
-            print "Function missing. Injecting...\n";
-            $content =~ s/(struct vk_sync_timeline_type)/$new_func\n\n$1/;
-            
-            # E conecta ela na struct (hook)
-            $content =~ s/(\.wait\s*=\s*vk_sync_timeline_wait,)/$1\n         .wait_many = vk_sync_timeline_wait_many, /;
+             print "ERROR: Injection point not found.\n";
+             exit 1;
         }
 
         open($fh, ">", $filename) or die "Cannot write back";
