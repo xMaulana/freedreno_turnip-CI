@@ -153,16 +153,16 @@ vk_sync_timeline_wait_locked(struct vk_device *device,
 }
 EOF_NEW
 
-    # Usa Perl para substituir a função antiga inteira pela nova
-    # A regex procura "static VkResult vk_sync_timeline_wait_locked" até o fechamento "return VK_SUCCESS; }"
+    # CORREÇÃO AQUI: Removida a barra invertida antes de $/
     perl -i -0777 -pe '
-        s/static VkResult\s+vk_sync_timeline_wait_locked.*?return VK_SUCCESS;\s+}/do { local \$\/; open F, "new_func_body.c"; <F> }/se
+        s/static VkResult\s+vk_sync_timeline_wait_locked.*?return VK_SUCCESS;\s+}/do { local $/; open F, "new_func_body.c"; <F> }/se
     ' src/vulkan/runtime/vk_sync_timeline.c
 
     if grep -q "list_for_each_entry" src/vulkan/runtime/vk_sync_timeline.c; then
         echo -e "${green}SUCCESS: Semaphore Patch Logic Applied!${nocolor}"
     else
         echo -e "${red}WARNING: Failed to inject Semaphore Patch logic. Code structure might differ.${nocolor}"
+        exit 1
     fi
 
     # 5. DXVK FIX (GS/Tessellation)
