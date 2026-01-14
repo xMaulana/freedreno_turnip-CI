@@ -13,15 +13,14 @@ workdir="$(pwd)/turnip_workdir"
 ndkver="android-ndk-r28"
 target_sdk="36"
 
-# 1. BASE: Rob Clark (Bleeding Edge oficial)
-base_repo="https://gitlab.freedesktop.org/robclark/mesa.git"
-base_branch="tu/gen8"
+# 1. BASE: Mesa Oficial (Para buscar a MR)
+base_repo="https://gitlab.freedesktop.org/mesa/mesa.git"
 
 # 2. HACKS: Whitebelyash (Gen8 patches)
 hacks_repo="https://github.com/whitebelyash/mesa-tu8.git"
 hacks_branch="gen8"
 
-# Commit que quebra o DXVK (Vamos reverter ele)
+# Commit que quebra o DXVK (Vamos reverter ele se existir)
 bad_commit="2f0ea1c6"
 
 commit_hash=""
@@ -63,18 +62,25 @@ prepare_source(){
 	cd "$workdir"
 	if [ -d mesa ]; then rm -rf mesa; fi
 	
-    # 1. Clona BASE (Rob Clark)
-    echo "Cloning Base: $base_repo ($base_branch)..."
-	git clone --branch "$base_branch" --depth 100 "$base_repo" mesa
+    # 1. Clona Mesa Oficial (Sem checkout inicial pesado)
+    echo "Cloning Official Mesa..."
+	git clone --depth 100 "$base_repo" mesa
 	cd mesa
     
-    echo -e "${green}Base Commit (Rob Clark):${nocolor}"
-    git log -1 --format="%H - %cd - %s"
-
     git config user.email "ci@turnip.builder"
     git config user.name "Turnip CI Builder"
 
-    # 2. Prepara e Mescla os HACKS
+    # 2. FETCH DA MR 39167 (Rob Clark - Elite Support)
+    echo -e "${green}Fetching Rob Clark MR 39167 (Gen8 Support)...${nocolor}"
+    git fetch "$base_repo" refs/merge-requests/39167/head:mr-39167
+    
+    # Muda para a branch da MR
+    git checkout mr-39167
+    
+    echo -e "${green}Base Commit (MR 39167):${nocolor}"
+    git log -1 --format="%H - %cd - %s"
+
+    # 3. MERGE DOS HACKS
     echo "Fetching Hacks from: $hacks_repo..."
     git remote add hacks "$hacks_repo"
     git fetch hacks "$hacks_branch"
@@ -85,7 +91,7 @@ prepare_source(){
         echo -e "${red}Merge Conflict detected! Resolving by accepting Hacks...${nocolor}"
         git checkout --theirs .
         git add .
-        git commit -m "Auto-resolved conflicts by accepting Hacks"
+        git commit -m "Auto-resolved conflicts by accepting Hacks over MR 39167"
         echo -e "${green}Conflicts resolved. Hacks applied successfully.${nocolor}"
     fi
 
@@ -95,7 +101,7 @@ prepare_source(){
         perl -i -p0e 's/(\n\s*a8xx_825)/,$1/s' src/freedreno/common/freedreno_devices.py
     fi
 
-    # 3. DXVK FIX (GS/Tessellation)
+    # 4. DXVK FIX (GS/Tessellation)
     echo -e "${green}Applying DXVK Fixes...${nocolor}"
     
     if git revert --no-edit "$bad_commit" 2>/dev/null; then
@@ -118,7 +124,7 @@ prepare_source(){
     cd .. 
     
 	commit_hash=$(git rev-parse HEAD)
-	version_str="RobClark-Gen8-Hybrid"
+	version_str="MR39167-Plus-Hacks"
 	cd "$workdir"
 }
 
@@ -195,19 +201,19 @@ package_driver(){
 	mv lib_temp.so "vulkan.ad08XX.so"
 
 	local short_hash=${commit_hash:0:7}
-	local meta_name="Turnip-RobClark-Hacks-${short_hash}"
+	local meta_name="Turnip-MR39167-Hacks-${short_hash}"
 	cat <<EOF > meta.json
 {
   "schemaVersion": 1,
   "name": "$meta_name",
-  "description": "Turnip Hybrid (RobClark Upstream + Whitebelyash Hacks). Commit $short_hash",
+  "description": "Turnip Hybrid (RobClark MR 39167 + Hacks). Commit $short_hash",
   "author": "StevenMX",
   "driverVersion": "$version_str",
   "libraryName": "vulkan.ad08XX.so"
 }
 EOF
 
-	local zip_name="Turnip-RobClark-Hacks-${short_hash}.zip"
+	local zip_name="Turnip-MR39167-Hacks-${short_hash}.zip"
 	zip -9 "$workdir/$zip_name" "vulkan.ad08XX.so" meta.json
 	echo -e "${green}Package ready: $workdir/$zip_name${nocolor}"
 }
@@ -218,9 +224,9 @@ generate_release_info() {
     local date_tag=$(date +'%Y%m%d')
 	local short_hash=${commit_hash:0:7}
 
-    echo "Turnip-RobClark-${date_tag}-${short_hash}" > tag
-    echo "Turnip Hybrid (RobClark + Hacks) - ${date_tag}" > release
-    echo "Automated Hybrid Build. Base: RobClark/tu/gen8. Hacks: Whitebelyash/gen8." > description
+    echo "Turnip-Elite-${date_tag}-${short_hash}" > tag
+    echo "Turnip Elite (MR 39167 + Hacks) - ${date_tag}" > release
+    echo "Base: RobClark MR 39167. Hacks: Whitebelyash/gen8. Includes DXVK fixes." > description
 }
 
 check_deps
