@@ -97,71 +97,125 @@ prepare_source(){
         perl -i -p0e 's/(\n\s*a8xx_825)/,$1/s' src/freedreno/common/freedreno_devices.py
     fi
 
-    # 4. APLICAÇÃO DO PATCH SEMAPHORE (VIA SUBSTITUIÇÃO DE TEXTO PERL)
-    echo -e "${green}Applying Semaphore Wait Patch (Perl Replace)...${nocolor}"
+    # 4. APLICAÇÃO DO PATCH ASYNC (Semaphore Wait Many)
+    echo -e "${green}Injecting Semaphore Async (Wait Many)...${nocolor}"
     
-    # Cria arquivo temporário com a nova função
-cat << 'EOF_NEW' > new_func_body.c
-static VkResult
-vk_sync_timeline_wait_locked(struct vk_device *device,
-                             struct vk_sync_timeline_state *state,
-                             uint64_t wait_value,
-                             enum vk_sync_wait_flags wait_flags,
-                             uint64_t abs_timeout_ns)
+    # Cria arquivo com a nova função
+cat << 'EOF_ASYNC' > new_wait_many.c
+VkResult
+vk_sync_timeline_wait_many(struct vk_device *device,
+                           uint32_t count,
+                           struct vk_sync_timeline **timelines,
+                           const uint64_t *wait_values,
+                           enum vk_sync_wait_flags wait_flags,
+                           uint64_t abs_timeout_ns)
 {
     struct timespec abs_timeout_ts;
     timespec_from_nsec(&abs_timeout_ts, abs_timeout_ns);
 
-    /* Wait until the timeline reaches the requested value */
-    while (state->highest_past < wait_value) {
-        struct vk_sync_timeline_point *point = NULL;
-
-        /* Get the first pending point >= wait_value */
-        list_for_each_entry(struct vk_sync_timeline_point, p,
-                            &state->pending_points, link) {
-            if (p->value >= wait_value) {
-                vk_sync_timeline_ref_point_locked(p);
-                point = p;
-                break;
+    uint32_t i;
+    while (true) {
+        bool any_ready = false;
+        for (i = 0; i < count; i++) {
+            struct vk_sync_timeline_state *state = timelines[i]->state;
+            mtx_lock(&state->mutex);
+            if (state->highest_past >= wait_values[i]) {
+                any_ready = true;
+                mtx_unlock(&state->mutex);
+                if (wait_flags & VK_SYNC_WAIT_ANY)
+                    return VK_SUCCESS;
+                continue;
             }
+
+            struct vk_sync_timeline_point *point = NULL;
+            list_for_each_entry(struct vk_sync_timeline_point, p,
+                                &state->pending_points, link) {
+                if (p->value >= wait_values[i]) {
+                    vk_sync_timeline_ref_point_locked(p);
+                    point = p;
+                    break;
+                }
+            }
+
+            if (!point) {
+                mtx_unlock(&state->mutex);
+                continue;
+            }
+
+            mtx_unlock(&state->mutex);
+            VkResult r = vk_sync_wait(device, &point->sync, 0,
+                                      VK_SYNC_WAIT_COMPLETE,
+                                      abs_timeout_ns);
+            mtx_lock(&state->mutex);
+            vk_sync_timeline_unref_point_locked(device, state, point);
+            if (r != VK_SUCCESS)
+                return r;
+            vk_sync_timeline_complete_point_locked(device, state, point);
+            mtx_unlock(&state->mutex);
+
+            if (wait_flags & VK_SYNC_WAIT_ANY)
+                return VK_SUCCESS;
         }
 
-        if (!point) {
-            /* Nothing pending, just wait on condition variable */
-            int ret = u_cnd_monotonic_timedwait(&state->cond, &state->mutex, &abs_timeout_ts);
-            if (ret == thrd_timedout)
-                return VK_TIMEOUT;
-            if (ret != thrd_success)
-                return vk_errorf(device, VK_ERROR_UNKNOWN, "cnd_timedwait failed");
-            continue;
+        if (!(wait_flags & VK_SYNC_WAIT_ANY)) {
+            bool all_ready = true;
+            for (i = 0; i < count; i++) {
+                if (timelines[i]->state->highest_past < wait_values[i]) {
+                    all_ready = false;
+                    break;
+                }
+            }
+            if (all_ready)
+                return VK_SUCCESS;
         }
 
-        /* Unlock while waiting on this specific timeline point */
-        mtx_unlock(&state->mutex);
-        VkResult r = vk_sync_wait(device, &point->sync, 0, VK_SYNC_WAIT_COMPLETE, abs_timeout_ns);
-        mtx_lock(&state->mutex);
-
-        vk_sync_timeline_unref_point_locked(device, state, point);
-
-        if (r != VK_SUCCESS)
-            return r;
-
-        vk_sync_timeline_complete_point_locked(device, state, point);
+        /* Wait on the first condition variable for any timeline */
+        mtx_lock(&timelines[0]->state->mutex);
+        int ret = u_cnd_monotonic_timedwait(&timelines[0]->state->cond,
+                                            &timelines[0]->state->mutex,
+                                            &abs_timeout_ts);
+        mtx_unlock(&timelines[0]->state->mutex);
+        if (ret == thrd_timedout)
+            return VK_TIMEOUT;
+        if (ret != thrd_success)
+            return vk_errorf(device, VK_ERROR_UNKNOWN, "cnd_timedwait failed");
     }
-
-    return VK_SUCCESS;
 }
-EOF_NEW
+EOF_ASYNC
 
-    # CORREÇÃO AQUI: Removida a barra invertida antes de $/
-    perl -i -0777 -pe '
-        s/static VkResult\s+vk_sync_timeline_wait_locked.*?return VK_SUCCESS;\s+}/do { local $/; open F, "new_func_body.c"; <F> }/se
-    ' src/vulkan/runtime/vk_sync_timeline.c
+    # Script Perl para INJETAR ou SUBSTITUIR a função com segurança
+    perl -i -0777 -e '
+        my $filename = "src/vulkan/runtime/vk_sync_timeline.c";
+        open(my $fh, "<", $filename) or die "Cannot open $filename";
+        my $content = do { local $/; <$fh> };
+        close($fh);
 
-    if grep -q "list_for_each_entry" src/vulkan/runtime/vk_sync_timeline.c; then
-        echo -e "${green}SUCCESS: Semaphore Patch Logic Applied!${nocolor}"
+        open(my $nfh, "<", "new_wait_many.c") or die "Cannot read new function";
+        my $new_func = do { local $/; <$nfh> };
+        close($nfh);
+
+        if ($content =~ /VkResult\s+vk_sync_timeline_wait_many/) {
+            # Se a função já existe, SUBSTITUI ela inteira
+            print "Function exists. Replacing...\n";
+            $content =~ s/VkResult\s+vk_sync_timeline_wait_many.*?^}/$new_func/ms;
+        } else {
+            # Se não existe, ADICIONA antes do vk_sync_timeline_get_type
+            print "Function missing. Injecting...\n";
+            $content =~ s/(struct vk_sync_timeline_type)/$new_func\n\n$1/;
+            
+            # E conecta ela na struct (hook)
+            $content =~ s/(\.wait\s*=\s*vk_sync_timeline_wait,)/$1\n         .wait_many = vk_sync_timeline_wait_many, /;
+        }
+
+        open($fh, ">", $filename) or die "Cannot write back";
+        print $fh $content;
+        close($fh);
+    '
+
+    if grep -q "vk_sync_timeline_wait_many" src/vulkan/runtime/vk_sync_timeline.c; then
+        echo -e "${green}SUCCESS: Semaphore Async Patch Applied!${nocolor}"
     else
-        echo -e "${red}WARNING: Failed to inject Semaphore Patch logic. Code structure might differ.${nocolor}"
+        echo -e "${red}ERROR: Failed to inject Async Patch.${nocolor}"
         exit 1
     fi
 
@@ -188,7 +242,7 @@ EOF_NEW
     cd .. 
     
 	commit_hash=$(git rev-parse HEAD)
-	version_str="MR39167-Plus-SemaphoreFix"
+	version_str="MR39167-AsyncSemaphore"
 	cd "$workdir"
 }
 
@@ -265,19 +319,19 @@ package_driver(){
 	mv lib_temp.so "vulkan.ad08XX.so"
 
 	local short_hash=${commit_hash:0:7}
-	local meta_name="Turnip-MR39167-Plus-SemaphoreFix-${short_hash}"
+	local meta_name="Turnip-AsyncSemaphore-Fixed-${short_hash}"
 	cat <<EOF > meta.json
 {
   "schemaVersion": 1,
   "name": "$meta_name",
-  "description": "Turnip Hybrid (RobClark MR 39167 + Hacks + Semaphore Fix). Commit $short_hash",
+  "description": "Turnip Hybrid (RobClark MR 39167 + Hacks + Async Semaphore). Commit $short_hash",
   "author": "StevenMX",
   "driverVersion": "$version_str",
   "libraryName": "vulkan.ad08XX.so"
 }
 EOF
 
-	local zip_name="Turnip-MR39167-Plus-SemaphoreFix-${short_hash}.zip"
+	local zip_name="Turnip-AsyncSemaphore-Fixed-${short_hash}.zip"
 	zip -9 "$workdir/$zip_name" "vulkan.ad08XX.so" meta.json
 	echo -e "${green}Package ready: $workdir/$zip_name${nocolor}"
 }
@@ -288,9 +342,9 @@ generate_release_info() {
     local date_tag=$(date +'%Y%m%d')
 	local short_hash=${commit_hash:0:7}
 
-    echo "Turnip-Elite-Fixed-${date_tag}-${short_hash}" > tag
-    echo "Turnip Elite (Fixed Semaphore) - ${date_tag}" > release
-    echo "Base: RobClark MR 39167. Hacks: Whitebelyash/gen8. Includes Semaphore Fix & DXVK fixes." > description
+    echo "Turnip-Elite-Async-${date_tag}-${short_hash}" > tag
+    echo "Turnip Elite (Async Semaphore) - ${date_tag}" > release
+    echo "Base: RobClark MR 39167. Hacks: Whitebelyash/gen8. Includes Async Semaphore & DXVK fixes." > description
 }
 
 check_deps
