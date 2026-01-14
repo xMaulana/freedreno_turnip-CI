@@ -13,11 +13,15 @@ workdir="$(pwd)/turnip_workdir"
 ndkver="android-ndk-r28"
 target_sdk="36"
 
-# NOVA BASE: Whitebelyash (Gen8 Direct)
-base_repo="https://github.com/whitebelyash/mesa-tu8.git"
-base_branch="gen8"
+# 1. BASE: Rob Clark (Bleeding Edge oficial)
+base_repo="https://gitlab.freedesktop.org/robclark/mesa.git"
+base_branch="tu/gen8"
 
-# Commit problemático (Tenta reverter, se não achar, usa patch manual)
+# 2. HACKS: Whitebelyash (Gen8 patches)
+hacks_repo="https://github.com/whitebelyash/mesa-tu8.git"
+hacks_branch="gen8"
+
+# Commit que quebra o DXVK (Vamos reverter ele)
 bad_commit="2f0ea1c6"
 
 commit_hash=""
@@ -59,37 +63,49 @@ prepare_source(){
 	cd "$workdir"
 	if [ -d mesa ]; then rm -rf mesa; fi
 	
-    # 1. Clona DIRETAMENTE do Whitebelyash
-    echo "Cloning Source: $base_repo ($base_branch)..."
+    # 1. Clona BASE (Rob Clark)
+    echo "Cloning Base: $base_repo ($base_branch)..."
 	git clone --branch "$base_branch" --depth 100 "$base_repo" mesa
 	cd mesa
     
-    echo -e "${green}Current Commit:${nocolor}"
+    echo -e "${green}Base Commit (Rob Clark):${nocolor}"
     git log -1 --format="%H - %cd - %s"
 
     git config user.email "ci@turnip.builder"
     git config user.name "Turnip CI Builder"
 
-    # --- CORREÇÃO DE SINTAXE (Se necessário) ---
-    echo "Checking freedreno_devices.py syntax..."
+    # 2. Prepara e Mescla os HACKS
+    echo "Fetching Hacks from: $hacks_repo..."
+    git remote add hacks "$hacks_repo"
+    git fetch hacks "$hacks_branch"
+    
+    echo "Attempting Merge Hacks..."
+    # Tenta merge, se der conflito aceita "theirs" (os hacks)
+    if ! git merge --no-edit "hacks/$hacks_branch" --allow-unrelated-histories; then
+        echo -e "${red}Merge Conflict detected! Resolving by accepting Hacks...${nocolor}"
+        git checkout --theirs .
+        git add .
+        git commit -m "Auto-resolved conflicts by accepting Hacks"
+        echo -e "${green}Conflicts resolved. Hacks applied successfully.${nocolor}"
+    fi
+
+    # --- CORREÇÃO DE SINTAXE (Comum ao mesclar hacks) ---
+    echo "Fixing freedreno_devices.py syntax..."
     if [ -f "src/freedreno/common/freedreno_devices.py" ]; then
         perl -i -p0e 's/(\n\s*a8xx_825)/,$1/s' src/freedreno/common/freedreno_devices.py
     fi
 
-    # 2. DXVK FIX (GS/Tessellation)
+    # 3. DXVK FIX (GS/Tessellation)
     echo -e "${green}Applying DXVK Fixes...${nocolor}"
     
-    # Tenta reverter via git primeiro
     if git revert --no-edit "$bad_commit" 2>/dev/null; then
         echo -e "${green}SUCCESS: Reverted commit $bad_commit via Git.${nocolor}"
     else
-        echo -e "${red}Git revert failed (commit not found or conflict). Applying MANUAL patch...${nocolor}"
+        echo -e "${red}Git revert failed. Applying MANUAL patch...${nocolor}"
         git revert --abort || true
-        
-        # Patch Manual: Garante que chip=8 não seja bloqueado
+        # Fallback manual
         find src/freedreno/vulkan -name "*.cc" -print0 | xargs -0 sed -i 's/ && (pdevice->info->chip != 8)//g'
         find src/freedreno/vulkan -name "*.cc" -print0 | xargs -0 sed -i 's/ && (pdevice->info->chip == 8)//g'
-        echo "Applied manual patch via SED to enable GS/Tess."
     fi
 
     # --- SPIRV Manual ---
@@ -102,7 +118,7 @@ prepare_source(){
     cd .. 
     
 	commit_hash=$(git rev-parse HEAD)
-	version_str="Whitebelyash-Gen8"
+	version_str="RobClark-Gen8-Hybrid"
 	cd "$workdir"
 }
 
@@ -179,19 +195,19 @@ package_driver(){
 	mv lib_temp.so "vulkan.ad08XX.so"
 
 	local short_hash=${commit_hash:0:7}
-	local meta_name="Turnip-Gen8-Whitebelyash-${short_hash}"
+	local meta_name="Turnip-RobClark-Hacks-${short_hash}"
 	cat <<EOF > meta.json
 {
   "schemaVersion": 1,
   "name": "$meta_name",
-  "description": "Turnip Gen8 V15. Commit $short_hash",
+  "description": "Turnip Hybrid (RobClark Upstream + Whitebelyash Hacks). Commit $short_hash",
   "author": "StevenMX",
   "driverVersion": "$version_str",
   "libraryName": "vulkan.ad08XX.so"
 }
 EOF
 
-	local zip_name="Turnip-Gen8-Whitebelyash-${short_hash}.zip"
+	local zip_name="Turnip-RobClark-Hacks-${short_hash}.zip"
 	zip -9 "$workdir/$zip_name" "vulkan.ad08XX.so" meta.json
 	echo -e "${green}Package ready: $workdir/$zip_name${nocolor}"
 }
@@ -202,9 +218,9 @@ generate_release_info() {
     local date_tag=$(date +'%Y%m%d')
 	local short_hash=${commit_hash:0:7}
 
-    echo "Turnip-Gen8-${date_tag}-${short_hash}" > tag
-    echo "Turnip Gen8 (Whitebelyash) - ${date_tag}" > release
-    echo "Automated Build from Whitebelyash/gen8. Includes DXVK fixes." > description
+    echo "Turnip-RobClark-${date_tag}-${short_hash}" > tag
+    echo "Turnip Hybrid (RobClark + Hacks) - ${date_tag}" > release
+    echo "Automated Hybrid Build. Base: RobClark/tu/gen8. Hacks: Whitebelyash/gen8." > description
 }
 
 check_deps
