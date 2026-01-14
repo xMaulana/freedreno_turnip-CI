@@ -20,7 +20,7 @@ base_repo="https://gitlab.freedesktop.org/mesa/mesa.git"
 hacks_repo="https://github.com/whitebelyash/mesa-tu8.git"
 hacks_branch="gen8"
 
-# Commit que quebra o DXVK (Vamos reverter ele se existir)
+# Commit que quebra o DXVK
 bad_commit="2f0ea1c6"
 
 commit_hash=""
@@ -97,10 +97,10 @@ prepare_source(){
         perl -i -p0e 's/(\n\s*a8xx_825)/,$1/s' src/freedreno/common/freedreno_devices.py
     fi
 
-    # [cite_start]4. APLICAÇÃO DO PATCH SEMAPHORE (CORRIGIDO) [cite: 1, 28]
+    # 4. APLICAÇÃO DO PATCH SEMAPHORE (AGORA ALINHADO À ESQUERDA)
     echo -e "${green}Applying Semaphore Wait Patch...${nocolor}"
     
-    # Criamos o arquivo .patch limpo aqui mesmo
+# O BLOCO ABAIXO NÃO PODE TER INDENTAÇÃO
 cat << 'EOF' > semaphore_fix.patch
 diff --git a/src/vulkan/runtime/vk_sync_timeline.c b/src/vulkan/runtime/vk_sync_timeline.c
 --- a/src/vulkan/runtime/vk_sync_timeline.c
@@ -199,12 +199,12 @@ diff --git a/src/vulkan/runtime/vk_sync_timeline.c b/src/vulkan/runtime/vk_sync_
  }
 EOF
     
-    # Aplica ignorando espaço em branco para evitar erro "malformed patch"
+    # Aplica ignorando espaço em branco e mudanças de espaço
     if git apply --ignore-space-change --ignore-whitespace semaphore_fix.patch; then
         echo -e "${green}SUCCESS: Semaphore Patch applied!${nocolor}"
     else
         echo -e "${red}Semaphore Patch Failed! Retrying with 3-way merge...${nocolor}"
-        git apply -3 semaphore_fix.patch || echo -e "${red}Final Failure on Patch.${nocolor}"
+        git apply -3 semaphore_fix.patch || echo -e "${red}Final Failure on Patch (Check indentation).${nocolor}"
     fi
 
     # 5. DXVK FIX (GS/Tessellation)
