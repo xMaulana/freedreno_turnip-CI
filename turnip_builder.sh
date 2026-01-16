@@ -10,7 +10,7 @@ magiskdir="$workdir/turnip_module"
 ndkver="android-ndk-r29"
 ndk="$workdir/$ndkver/toolchains/llvm/prebuilt/linux-x86_64/bin"
 sdkver="34"
-mesasrc="https://github.com/whitebelyash/mesa-tu8"
+mesasrc="https://github.com/xMaulana/mesa-tu8-A825"
 srcfolder="mesa"
 
 clear
