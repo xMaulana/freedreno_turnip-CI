@@ -59,7 +59,7 @@ prepare_workdir(){
 		git clone $mesasrc --depth=1 --no-single-branch $srcfolder
 		cd $srcfolder
 	echo "Pushing TU_VERSION..."
-		echo "#define TUGEN8_DRV_VERSION \"v$BUILD_VERSION\" > ./src/freedreno/vulkan/tu_version.h
+		echo "#define TUGEN8_DRV_VERSION \"v$BUILD_VERSION\"" > ./src/freedreno/vulkan/tu_version.h
 }
 
 
