@@ -12,7 +12,7 @@ ndkver="android-ndk-r28"
 target_sdk="36"
 
 # ALTERAÇÃO: Usando diretamente o repo e branch do Whitebelyash
-base_repo="https://github.com/whitebelyash/mesa-tu8.git"
+base_repo="https://github.com/xMaulana/mesa-tu8-A825.git"
 base_branch="gen8"
 
 bad_commit="2f0ea1c6"
