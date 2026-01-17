@@ -144,9 +144,9 @@ EOF
 	cat <<EOF >"meta.json"
 {
   "schemaVersion": 1,
-  "name": "A8XX MR v$BUILD_VERSION",
-  "description": "A8xx support MR with A830/A825/A810/A829/UBWC-on-KGSL hacks. Built from $1 branch",
-  "author": "whitebelyash",
+  "name": "A825 v$BUILD_VERSION",
+  "description": "A825 support fixed. Built from $1 branch",
+  "author": "whitebelyash (mod xmaulana)",
   "packageVersion": "1",
   "vendor": "Mesa",
   "driverVersion": "Vulkan 1.4.335",
