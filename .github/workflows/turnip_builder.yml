@@ -7,12 +7,18 @@ on:
         description: 'Version to build'
         required: true
         type: string
+      mesa_branch:
+        description: 'Mesa source branch to clone'
+        required: false
+        type: string
+        default: 'main'
 
 jobs:
   start_building_turnip:
     runs-on: ubuntu-24.04
     env:
       BUILD_VERSION: ${{ inputs.version }}
+      MESA_BRANCH: ${{ inputs.mesa_branch }}
     steps:
     - uses: actions/checkout@v4
 

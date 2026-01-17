@@ -12,6 +12,7 @@ ndk="$workdir/$ndkver/toolchains/llvm/prebuilt/linux-x86_64/bin"
 sdkver="34"
 mesasrc="https://github.com/xMaulana/mesa-tu8-A825"
 srcfolder="mesa"
+mesa_branch="${MESA_BRANCH:-main}"
 
 clear
 
@@ -55,8 +56,12 @@ prepare_workdir(){
 	echo "Exracting android-ndk ..." $'\n'
 		unzip "$ndkver"-linux.zip &> /dev/null
 
-	echo "Downloading mesa source ..." $'\n'
-		git clone $mesasrc --depth=1 --no-single-branch $srcfolder
+	echo "Downloading mesa source from branch: $mesa_branch ..." $'\n'
+		if [ -n "$mesa_branch" ] && [ "$mesa_branch" != "main" ]; then
+			git clone $mesasrc --depth=1 --branch $mesa_branch $srcfolder
+		else
+			git clone $mesasrc --depth=1 --no-single-branch $srcfolder
+		fi
 		cd $srcfolder
 	echo "Pushing TU_VERSION..."
 		echo "#define TUGEN8_DRV_VERSION \"v$BUILD_VERSION\"" > ./src/freedreno/vulkan/tu_version.h
@@ -154,9 +159,9 @@ EOF
   "libraryName": "libvulkan_freedreno.so"
 }
 EOF
-zip /tmp/a8xx-$1-V$BUILD_VERSION.zip libvulkan_freedreno.so meta.json
+zip /tmp/a8xx-$1-V$BUILD_VERSION-$mesa_branch.zip libvulkan_freedreno.so meta.json
 cd -
-if ! [ -a /tmp/a8xx-$1-V$BUILD_VERSION.zip ]; then
+if ! [ -a /tmp/a8xx-$1-V$BUILD_VERSION-$mesa_branch.zip ]; then
 	echo -e "$red Failed to pack the archive! $nocolor"
 fi
 }
