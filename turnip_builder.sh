@@ -22,7 +22,7 @@ run_all(){
 	echo "====== Begin building TU V$BUILD_VERSION! ======"
 	check_deps
 	prepare_workdir
-	build_lib_for_android gen8
+	build_lib_for_android $mesa_branch
 	#build_lib_for_android gen8-yuck
 }
 
@@ -70,7 +70,7 @@ prepare_workdir(){
 
 build_lib_for_android(){
 	echo "==== Building Mesa on $1 branch ===="
-	git checkout origin/$1
+	git chechkout origin/$mesa_branch
 	#Workaround for using Clang as c compiler instead of GCC
 	mkdir -p "$workdir/bin"
 	ln -sf "$ndk/clang" "$workdir/bin/cc"
