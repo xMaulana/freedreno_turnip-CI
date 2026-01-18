@@ -22,8 +22,55 @@ run_all(){
 	echo "====== Begin building TU V$BUILD_VERSION! ======"
 	check_deps
 	prepare_workdir
+	apply_custom_patches
 	build_lib_for_android $mesa_branch
 	#build_lib_for_android gen8-yuck
+}
+
+apply_custom_patches(){
+    echo -e "${green}Applying Custom Patches for Adreno 825 (SM8735)...${nocolor}"
+
+    # Patch 1: UBWC Config for A825
+    cat <<'EOF' > patch_ubwc.diff
+diff --git a/src/freedreno/vulkan/tu_knl_kgsl.cc b/src/freedreno/vulkan/tu_knl_kgsl.cc
+--- a/src/freedreno/vulkan/tu_knl_kgsl.cc
++++ b/src/freedreno/vulkan/tu_knl_kgsl.cc
+@@ -228,6 +228,15 @@
+    return VK_SUCCESS;
+ }
+ 
++static VkResult
++tu_knl_kgsl_ubwc_override(struct tu_device *dev) {
++   /* OVERRIDE: Adreno 825 (SM8735) requires 4-Channel Macrotile */
++   if (dev->physical_device->dev_id.chip_id == 0x44030000) {
++      dev->physical_device->ubwc_config.highest_bank_bit = 15;
++      dev->physical_device->ubwc_config.bank_swizzle_levels = 2;
++      dev->physical_device->ubwc_config.macrotile_mode = FDL_MACROTILE_4_CHANNEL;
++   }
++   return VK_SUCCESS;
++}
++
+ static VkResult
+ kgsl_bo_init(struct tu_device *dev,
+              struct vk_object_base *base,
+EOF
+    
+    cat <<'EOF' > patch_debug.diff
+diff --git a/src/freedreno/vulkan/tu_util.cc b/src/freedreno/vulkan/tu_util.cc
+--- a/src/freedreno/vulkan/tu_util.cc
++++ b/src/freedreno/vulkan/tu_util.cc
+@@ -130,7 +130,10 @@
+ static void
+ tu_env_init_once(void)
+ {
+-   tu_env.start_debug = tu_env.debug = parse_debug_string(os_get_option("TU_DEBUG"), tu_debug_options);
++   uint64_t default_flags = TU_DEBUG_NOLRZ;
++   tu_env.start_debug = tu_env.debug = parse_debug_string(os_get_option("TU_DEBUG"), tu_debug_options) | default_flags;
+ 
+    if (TU_DEBUG(STARTUP))
+       mesa_logi("TU_DEBUG=0x%" PRIx64, tu_env.debug.load());
+EOF
+    patch -p1 --fuzz=3 < patch_debug.diff || echo "Warn: Patch Debug failed"
 }
 
 check_deps(){
