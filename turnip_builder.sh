@@ -63,25 +63,6 @@ diff --git a/src/freedreno/vulkan/tu_device.cc b/src/freedreno/vulkan/tu_device.
     features->formatA4R4G4B4 = true;
 EOF
     patch -p1 --fuzz=3 < patch_layout.diff || echo "Warn: Patch Layout failed"
-
-    # Patch: Force TU_DEBUG=nolrz
-    cat <<'EOF' > patch_debug.diff
-diff --git a/src/freedreno/vulkan/tu_util.cc b/src/freedreno/vulkan/tu_util.cc
---- a/src/freedreno/vulkan/tu_util.cc
-+++ b/src/freedreno/vulkan/tu_util.cc
-@@ -130,7 +130,8 @@
- static void
- tu_env_init_once(void)
- {
--   tu_env.start_debug = tu_env.debug = parse_debug_string(os_get_option("TU_DEBUG"), tu_debug_options);
-+   uint64_t default_flags = TU_DEBUG_NOLRZ;
-+   tu_env.start_debug = tu_env.debug = parse_debug_string(os_get_option("TU_DEBUG"), tu_debug_options) | default_flags;
- 
-    if (TU_DEBUG(STARTUP))
-       mesa_logi("TU_DEBUG=0x%" PRIx64, tu_env.debug.load());
-EOF
-    patch -p1 --fuzz=3 < patch_debug.diff || echo "Warn: Patch Debug failed"
-
 }
     
 check_deps(){
