@@ -28,38 +28,48 @@ run_all(){
 }
 
 apply_custom_patches(){
-    echo -e "${green}Applying Custom Patches for Adreno 825 (SM8735)...${nocolor}"
+    echo -e "${green}Applying Custom Patches...${nocolor}"
 
-    # Patch 1: UBWC Config for A825
-    cat <<'EOF' > patch_ubwc.diff
-diff --git a/src/freedreno/vulkan/tu_knl_kgsl.cc b/src/freedreno/vulkan/tu_knl_kgsl.cc
---- a/src/freedreno/vulkan/tu_knl_kgsl.cc
-+++ b/src/freedreno/vulkan/tu_knl_kgsl.cc
-@@ -228,6 +228,15 @@
-    return VK_SUCCESS;
- }
+    # Patch: Disable Workgroup Memory Explicit Layout
+    cat <<'EOF' > patch_layout.diff
+diff --git a/src/freedreno/vulkan/tu_device.cc b/src/freedreno/vulkan/tu_device.cc
+--- a/src/freedreno/vulkan/tu_device.cc
++++ b/src/freedreno/vulkan/tu_device.cc
+@@ -222,7 +222,7 @@
+       .KHR_variable_pointers = true,
+       .KHR_vertex_attribute_divisor = true,
+       .KHR_vulkan_memory_model = true,
+-      .KHR_workgroup_memory_explicit_layout = true,
++      .KHR_workgroup_memory_explicit_layout = false,
+       .KHR_zero_initialize_workgroup_memory = true,
  
-+static VkResult
-+tu_knl_kgsl_ubwc_override(struct tu_device *dev) {
-+   /* OVERRIDE: Adreno 825 (SM8735) requires 4-Channel Macrotile */
-+   if (dev->physical_device->dev_id.chip_id == 0x44030000) {
-+      dev->physical_device->ubwc_config.highest_bank_bit = 15;
-+      dev->physical_device->ubwc_config.bank_swizzle_levels = 2;
-+      dev->physical_device->ubwc_config.macrotile_mode = FDL_MACROTILE_4_CHANNEL;
-+   }
-+   return VK_SUCCESS;
-+}
-+
- static VkResult
- kgsl_bo_init(struct tu_device *dev,
-              struct vk_object_base *base,
+       .EXT_4444_formats = true,
+@@ -494,11 +494,11 @@
+    features->vertexAttributeInstanceRateDivisor = true;
+    features->vertexAttributeInstanceRateZeroDivisor = true;
+ 
+-   /* VK_KHR_workgroup_memory_explicit_layout */
+-   features->workgroupMemoryExplicitLayout = true;
+-   features->workgroupMemoryExplicitLayoutScalarBlockLayout = true;
+-   features->workgroupMemoryExplicitLayout8BitAccess = true;
+-   features->workgroupMemoryExplicitLayout16BitAccess = true;
++      /* VK_KHR_workgroup_memory_explicit_layout */
++   features->workgroupMemoryExplicitLayout = false;
++   features->workgroupMemoryExplicitLayoutScalarBlockLayout = false;
++   features->workgroupMemoryExplicitLayout8BitAccess = false;
++   features->workgroupMemoryExplicitLayout16BitAccess = false;
+ 
+    /* VK_EXT_4444_formats */
+    features->formatA4R4G4B4 = true;
 EOF
-    
+    patch -p1 --fuzz=3 < patch_layout.diff || echo "Warn: Patch Layout failed"
+
+    # Patch: Force TU_DEBUG=nolrz
     cat <<'EOF' > patch_debug.diff
 diff --git a/src/freedreno/vulkan/tu_util.cc b/src/freedreno/vulkan/tu_util.cc
 --- a/src/freedreno/vulkan/tu_util.cc
 +++ b/src/freedreno/vulkan/tu_util.cc
-@@ -130,7 +130,10 @@
+@@ -130,7 +130,8 @@
  static void
  tu_env_init_once(void)
  {
@@ -71,6 +81,23 @@ diff --git a/src/freedreno/vulkan/tu_util.cc b/src/freedreno/vulkan/tu_util.cc
        mesa_logi("TU_DEBUG=0x%" PRIx64, tu_env.debug.load());
 EOF
     patch -p1 --fuzz=3 < patch_debug.diff || echo "Warn: Patch Debug failed"
+
+    # Patch: Force Sysmem
+    cat <<'EOF' > patch_sysmem.diff
+diff --git a/src/freedreno/vulkan/tu_cmd_buffer.cc b/src/freedreno/vulkan/tu_cmd_buffer.cc
+--- a/src/freedreno/vulkan/tu_cmd_buffer.cc
++++ b/src/freedreno/vulkan/tu_cmd_buffer.cc
+@@ -985,6 +985,8 @@
+ use_sysmem_rendering(struct tu_cmd_buffer *cmd,
+                      struct tu_renderpass_result **autotune_result)
+ {
++   return true;
++
+    if (TU_DEBUG(SYSMEM)) {
+       cmd->state.rp.gmem_disable_reason = "TU_DEBUG(SYSMEM)";
+       return true;
+EOF
+    patch -p1 --fuzz=3 < patch_sysmem.diff || echo "Warn: Patch Sysmem failed"
 }
 
 check_deps(){
