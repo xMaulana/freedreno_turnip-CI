@@ -82,24 +82,8 @@ diff --git a/src/freedreno/vulkan/tu_util.cc b/src/freedreno/vulkan/tu_util.cc
 EOF
     patch -p1 --fuzz=3 < patch_debug.diff || echo "Warn: Patch Debug failed"
 
-    # Patch: Force Sysmem
-    cat <<'EOF' > patch_sysmem.diff
-diff --git a/src/freedreno/vulkan/tu_cmd_buffer.cc b/src/freedreno/vulkan/tu_cmd_buffer.cc
---- a/src/freedreno/vulkan/tu_cmd_buffer.cc
-+++ b/src/freedreno/vulkan/tu_cmd_buffer.cc
-@@ -985,6 +985,8 @@
- use_sysmem_rendering(struct tu_cmd_buffer *cmd,
-                      struct tu_renderpass_result **autotune_result)
- {
-+   return true;
-+
-    if (TU_DEBUG(SYSMEM)) {
-       cmd->state.rp.gmem_disable_reason = "TU_DEBUG(SYSMEM)";
-       return true;
-EOF
-    patch -p1 --fuzz=3 < patch_sysmem.diff || echo "Warn: Patch Sysmem failed"
 }
-
+    
 check_deps(){
 	echo "Checking system for required Dependencies ..."
 		for deps_chk in $deps;
