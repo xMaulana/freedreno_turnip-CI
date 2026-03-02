@@ -42,6 +42,6 @@ jobs:
         tag_name: mesa_v${{ inputs.version }}
         name: Mesa Turnip v${{ inputs.version }}
         files: |
-           /tmp/mesa-turnip-main-flushall-V${{ inputs.version }}.zip
-           /tmp/mesa-turnip-main-noflushall-V${{ inputs.version }}.zip
+           /tmp/mesa-turnip-main-V${{ inputs.version }}.zip
+           /tmp/mesa-turnip-main-V${{ inputs.version }}.zip
 
