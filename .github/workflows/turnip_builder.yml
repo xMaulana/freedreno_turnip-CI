@@ -31,7 +31,7 @@ jobs:
       with:
         body: |
           A8XX Turnip Vulkan V${{ inputs.version }}
-          Built from: https://github.com/whitebelyash/mesa-tu8.
+          Built from: https://github.com/xMaulana/mesa-tu8-A825.
           
           I didn't test this this much. Contact me on FEX (#android-wastelands) or EmuCore discord if there are any issues.
 
@@ -48,7 +48,7 @@ jobs:
           Adreno 810 is additionally very slow, I'm not sure if you even want to use Turnip there
           
           Files:
-          * gen8 - main branch (upstream MR + hacks applied)
+          * gen8-a825 - A825-optimized branch (upstream MR + A825 perf tuning + hacks applied)
           
           Notes:
           * Disable DXVK_HUD if you see weird black artifacts
@@ -59,4 +59,4 @@ jobs:
         tag_name: tu_v${{ inputs.version }}
         name: Turnip A8XX v${{ inputs.version }}
         files: |
-           /tmp/a8xx-gen8-V${{ inputs.version }}.zip
+           /tmp/a8xx-gen8-a825-V${{ inputs.version }}.zip
