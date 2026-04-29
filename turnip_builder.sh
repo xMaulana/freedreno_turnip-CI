@@ -10,7 +10,7 @@ magiskdir="$workdir/turnip_module"
 ndkver="android-ndk-r29"
 ndk="$workdir/$ndkver/toolchains/llvm/prebuilt/linux-x86_64/bin"
 sdkver="34"
-mesasrc="https://github.com/whitebelyash/mesa-tu8"
+mesasrc="https://github.com/xMaulana/mesa-tu8-A825"
 srcfolder="mesa"
 
 clear
@@ -21,7 +21,7 @@ run_all(){
 	echo "====== Begin building TU V$BUILD_VERSION! ======"
 	check_deps
 	prepare_workdir
-	build_lib_for_android gen8
+	build_lib_for_android gen8-a825
 	#build_lib_for_android gen8-yuck
 }
 
@@ -143,7 +143,7 @@ EOF
 {
   "schemaVersion": 1,
   "name": "A8XX MR v$BUILD_VERSION",
-  "description": "A8xx support MR with A830/A825/A810/A829/UBWC-on-KGSL hacks. Built from $1 branch",
+  "description": "A8xx support MR with A830/A825(optimized)/A810/A829/UBWC-on-KGSL hacks. Built from $1 branch",
   "author": "whitebelyash",
   "packageVersion": "1",
   "vendor": "Mesa",
